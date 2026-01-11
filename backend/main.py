@@ -68,18 +68,26 @@ async def run_orchestrator(request: OrchestratorRequest):
                 kind = event.get("event")
                 name = event.get("name")
                 
-                # Yield progress updates for nodes
-                if kind == "on_chain_start" and name == "semantic_splitter":
-                    msg = "Decomposing task into subtasks..."
+                # We care about when nodes start
+                if kind == "on_chain_start" and name in ["semantic_splitter", "supervisor"]:
+                    display_names = {
+                        "semantic_splitter": "Decomposing task into subtasks...",
+                        "supervisor": "Planning execution graph with Supervisor...",
+                    }
+                    msg = display_names.get(name, f"Executing {name}...")
                     yield f"data: {json.dumps({'type': 'progress', 'message': msg})}\n\n"
 
                 # Yield final results
                 elif kind == "on_chain_end" and name == "LangGraph":
                     final_output = event.get("data", {}).get("output", {})
                     subtasks = final_output.get("subtasks", [])
+                    graph_plan = final_output.get("graph_plan", {})
                     
                     if subtasks:
                          yield f"data: {json.dumps({'type': 'result', 'subtasks': subtasks})}\n\n"
+                    
+                    if graph_plan:
+                         yield f"data: {json.dumps({'type': 'result', 'graph_plan': graph_plan})}\n\n"
 
         except Exception as e:
             print(f"Error in event_generator: {e}")
