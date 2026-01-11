@@ -1,0 +1,34 @@
+services:
+  # --- Frontend (React) ---
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: Dockerfile
+  #     args:
+  #       - VITE_API_URL=http://localhost:8000
+  #   container_name: opportunityfinder_frontend_local
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #   networks:
+  #     - local_network
+
+  # --- Backend (FastAPI) ---
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: selfspawnagents_backend_local
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    networks:
+      - local_network
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+
+networks:
+  local_network:
+    driver: bridge

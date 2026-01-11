@@ -1,0 +1,34 @@
+services:
+  # --- Frontend (React) ---
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: Dockerfile
+  #     args:
+  #       - VITE_API_URL=https://api.opportunityfinder.villalbai.com
+  #   container_name: opportunityfinder_frontend
+  #   restart: unless-stopped
+  #   networks:
+  #     - npm_default
+
+  # --- Backend (FastAPI) ---
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: selfspawnagents_backend
+    restart: unless-stopped
+    # We do NOT expose ports here using "8000:8000". 
+    # NPM will talk to this container internally on port 8000.
+    expose:
+      - "8000"
+    networks:
+      - npm_default
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+
+networks:
+  npm_default:
+    external: true
