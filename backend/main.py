@@ -5,10 +5,11 @@ from pydantic import BaseModel
 from typing import List, Optional
 from agent import app_graph
 import json
+from agents.semantic_splitter import semantic_splitter_node
 
 import os
 
-app = FastAPI(title="Opportunity Finder Backend")
+app = FastAPI(title="Multi-Agent Orchestrator Backend")
 
 # Read allowed origins from environment variable, fallback to defaults
 env_origins = os.getenv("ALLOWED_ORIGINS", "")
@@ -32,66 +33,53 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class SearchRequest(BaseModel):
-    query: str
+class DecomposeRequest(BaseModel):
+    task: str
 
-class ContactInfo(BaseModel):
-    email: Optional[str] = None
-    phone: Optional[str] = None
+@app.post("/api/decompose")
+async def decompose_handler(request: DecomposeRequest):
+    """
+    Decompose a high-level task into subtasks using Module 1 (Semantic Splitter).
+    """
+    print(f"Received decompose request for: {request.task}")
+    # Construct minimal state for the node
+    result = await semantic_splitter_node({"task": request.task, "subtasks": []})
+    return {"status": "success", "subtasks": result.get("subtasks", [])}
 
-class PropertyResult(BaseModel):
-    id: Optional[str] = None
-    address: Optional[str] = None
-    price: Optional[str] = None
-    estimated_market_price: Optional[str] = None
-    neighborhood: Optional[str] = None
-    details: Optional[str] = None
-    justification: Optional[str] = None
-    imageUrl: Optional[str] = None
-    link: Optional[str] = None
-    source_url: Optional[str] = None
-    contact: Optional[ContactInfo] = None
-    opportunity_score: Optional[int] = None
+class OrchestratorRequest(BaseModel):
+    task: str
 
-class SearchResponse(BaseModel):
-    status: str
-    results: List[PropertyResult]
-
-@app.get("/")
-def read_root():
-    return {"message": "Opportunity Finder Backend is running"}
-
-@app.post("/api/search")
-async def search_handler(request: SearchRequest):
-    print(f"Received search request for: {request.query}")
+@app.post("/api/run")
+async def run_orchestrator(request: OrchestratorRequest):
+    """
+    Execute the Orchestrator Graph for a given task.
+    """
+    print(f"Received orchestrator run request for: {request.task}")
 
     async def event_generator():
         try:
-            initial_state = {"query": request.query, "raw_data": [], "final_results": []}
+            initial_state = {
+                "task": request.task, 
+                "subtasks": []
+            }
             
             # Use astream_events to track node transitions
-            # Note: version="v2" is recommended for latest LangGraph
             async for event in app_graph.astream_events(initial_state, version="v2"):
                 kind = event.get("event")
                 name = event.get("name")
                 
-                # We care about when nodes start
-                if kind == "on_chain_start" and name in ["search_market", "search_consolidator", "market_analyst", "report_compiler"]:
-                    display_names = {
-                        "search_market": "Buscando propiedades en el mercado...",
-                        "search_consolidator": "Consolidando y extrayendo detalles...",
-                        "market_analyst": "Analizando precios y oportunidades...",
-                        "report_compiler": "Compilando reporte final..."
-                    }
-                    msg = display_names.get(name, f"Ejecutando {name}...")
+                # Yield progress updates for nodes
+                if kind == "on_chain_start" and name == "semantic_splitter":
+                    msg = "Decomposing task into subtasks..."
                     yield f"data: {json.dumps({'type': 'progress', 'message': msg})}\n\n"
 
-                # We care about the final result from the graph
+                # Yield final results
                 elif kind == "on_chain_end" and name == "LangGraph":
-                    # The final output of the graph is in event["data"]["output"]
                     final_output = event.get("data", {}).get("output", {})
-                    results = final_output.get("final_results", [])
-                    yield f"data: {json.dumps({'type': 'result', 'results': results})}\n\n"
+                    subtasks = final_output.get("subtasks", [])
+                    
+                    if subtasks:
+                         yield f"data: {json.dumps({'type': 'result', 'subtasks': subtasks})}\n\n"
 
         except Exception as e:
             print(f"Error in event_generator: {e}")
