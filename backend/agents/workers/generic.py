@@ -28,29 +28,28 @@ async def generate_dynamic_system_prompt(instruction: str, agent_type: str) -> s
     response = await llm_mini.ainvoke(messages)
     return response.content
 
+from agents.tools.subgraph import spawn_subgraph
+
 async def generic_worker_node(state: dict, instruction: str, agent_type: str) -> dict:
     """
     A generic worker that uses the LLM to perform a task.
+    Supports tool calling for recursive subgraphs.
     """
     print(f"🤖 {agent_type} working on: {instruction}")
     
-    # Generate dynamic system prompt
+    # Generate dynamic system prompt (keeping existing logic)
     try:
         sys_prompt = await generate_dynamic_system_prompt(instruction, agent_type)
-        # Fallback if empty
-        if not sys_prompt:
-             raise ValueError("Empty system prompt generated")
+        if not sys_prompt: raise ValueError("Empty system prompt")
     except Exception as e:
         print(f"⚠️ Failed to generate dynamic prompt ({e}). Using fallback.")
         sys_prompt = f"""<role>Expert {agent_type}</role>
 <objective>Execute the user's instruction with high precision and expertise.</objective>
 <constraints>
 - Output the result directly.
+- If the task is too complex or requires multiple steps, call the 'spawn_subgraph' tool.
 - Maintain a professional and technical tone.
-- Do not include fluff or unnecessary conversational filler.
 </constraints>"""
-
-    # print(f"📝 Generated System Prompt:\n{sys_prompt}\n") # Optional: Debug print
 
     user_content = f"""<task>
 {instruction}
@@ -62,7 +61,25 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str) ->
     ]
     
     try:
-        response = await llm.ainvoke(messages)
+        # Bind tools
+        tools = [spawn_subgraph]
+        llm_with_tools = llm.bind_tools(tools)
+        
+        response = await llm_with_tools.ainvoke(messages)
+        
+        # Check for tool calls
+        if response.tool_calls:
+            print(f"🛠️ Tool Call Detected: {response.tool_calls[0]['name']}")
+            # Execute tool call manually (simple tool node logic)
+            # In a real LangGraph agent we'd let the graph handle this, but here we do a simple linear execution 
+            # since generic_worker is a single node wrapped in a function.
+            
+            tool_call = response.tool_calls[0]
+            if tool_call["name"] == "spawn_subgraph":
+                tool_args = tool_call["args"]
+                tool_output = await spawn_subgraph.ainvoke(tool_args)
+                return {"output": f"Recursion Result:\n{tool_output}"}
+        
         return {"output": response.content}
     except Exception as e:
         return {"output": f"Error: {str(e)}"}
