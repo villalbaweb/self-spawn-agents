@@ -61,16 +61,22 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str) ->
         HumanMessage(content=user_content)
     ]
     
+    # Inject depth into tool execution logic if needed
+    current_depth = state.get("depth", 0)
+    print(f"🤖 [GenericWorker] Processing for {agent_type} with depth {current_depth}")
+
     try:
         # Bind tools based on agent type
-        # Default: just recursion
-        tools = [spawn_subgraph]
+        # STRUCTURAL LIMIT: Only Orchestrator can spawn sub-agents to prevent exponential branching
+        tools = []
         
-        # Researcher: gets web search + recursion
-        if agent_type.lower() == "researcher":
-            tools = [web_search, spawn_subgraph]
+        if agent_type.lower() == "orchestrator":
+            tools = [spawn_subgraph]
+        elif agent_type.lower() == "researcher":
+            tools = [web_search]
+        # Coder and Reviewer get no tools - they must complete tasks directly
             
-        llm_with_tools = llm.bind_tools(tools)
+        llm_with_tools = llm.bind_tools(tools) if tools else llm
         
         response = await llm_with_tools.ainvoke(messages)
         
@@ -89,6 +95,14 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str) ->
                 tool_args["depth"] = state.get("depth", 0)
                 
                 tool_output = await spawn_subgraph.ainvoke(tool_args)
+                
+                # Check if depth limit was hit - if so, complete task directly
+                if "DEPTH LIMIT REACHED" in tool_output:
+                    print("🔄 Depth limit hit. Completing task directly without delegation...")
+                    # Re-invoke LLM without tools to force direct completion
+                    direct_response = await llm.ainvoke(messages)
+                    return {"output": f"[Completed directly due to depth limit]\n{direct_response.content}"}
+                
                 return {"output": f"Recursion Result:\n{tool_output}"}
                 
             elif tool_call["name"] == "web_search":

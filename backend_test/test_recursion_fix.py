@@ -25,7 +25,7 @@ class TestInceptionFix(unittest.IsolatedAsyncioTestCase):
         # Test Case 1: Depth Limit Reached
         result = await spawn_subgraph.ainvoke({"task": "test", "depth": 3})
         print(f"Result at depth 3: {result}")
-        self.assertIn("Max recursion depth of 3 reached", result)
+        self.assertIn("DEPTH LIMIT REACHED", result)
         
         # Verify app_graph was NOT called
         mock_app_graph.ainvoke.assert_not_called()
@@ -39,7 +39,7 @@ class TestInceptionFix(unittest.IsolatedAsyncioTestCase):
         # Verify it was called with incremented depth
         call_args = mock_app_graph.ainvoke.call_args[0][0]
         self.assertEqual(call_args["depth"], 3)
-        self.assertNotIn("Max recursion depth", result_ok)
+        self.assertNotIn("DEPTH LIMIT REACHED", result_ok)
 
 
     @patch("agents.workers.generic.spawn_subgraph")

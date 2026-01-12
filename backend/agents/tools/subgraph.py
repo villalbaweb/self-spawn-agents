@@ -18,9 +18,14 @@ async def spawn_subgraph(task: str, depth: int = 0) -> str:
     from agents.dependencies import MAX_RECURSION_DEPTH
     
     print(f"🔄 Spawning Recursive Subgraph for: {task} (Depth: {depth})")
-    
+    print(f"🔧 [SpawnSubgraph] Input depth: {depth}")
+
     if depth >= MAX_RECURSION_DEPTH:
-        msg = f"⛔ Max recursion depth of {MAX_RECURSION_DEPTH} reached. Cannot spawn new sub-agents."
+        msg = f"""⛔ DEPTH LIMIT REACHED (depth={depth}, max={MAX_RECURSION_DEPTH}).
+
+CRITICAL INSTRUCTION: DO NOT call spawn_subgraph again. The recursion limit has been reached.
+You MUST complete your current task directly without delegating to sub-agents.
+Provide your best answer using only the information and capabilities you have now."""
         print(msg)
         return msg
     

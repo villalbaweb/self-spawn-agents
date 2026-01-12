@@ -44,6 +44,8 @@ You have the following Agent Types available:
 - Output a JSON structure with 'nodes'.
 - 'dependencies' should list node IDs that must finish first.
 - Create a logical flow (e.g., Research -> Code -> Review).
+- IMPORTANT: Limit the graph to a MAXIMUM of 3 nodes to prevent resource explosion.
+- If more than 3 subtasks exist, consolidate them into 3 or fewer logical groups.
 </constraints>
 <task>Create a plan for the user's request based on the subtasks.</task>"""
 

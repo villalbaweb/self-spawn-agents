@@ -22,9 +22,13 @@ import operator
 def merge_dicts(a: Dict, b: Dict) -> Dict:
     return {**a, **b}
 
+def replace(a: Any, b: Any) -> Any:
+    return b
+
 class DynamicState(TypedDict):
     # Use a reducer to allow parallel updates to merge
     results: Annotated[Dict[str, str], merge_dicts]
+    depth: Annotated[int, replace] # Pass depth down to dynamic nodes
 
 async def graph_compiler_node(state: AgentState) -> Dict[str, Any]:
     """
@@ -52,6 +56,9 @@ async def graph_compiler_node(state: AgentState) -> Dict[str, Any]:
             # Note: s contains "results" so we can access prior results if needed
             # context = s.get("results", {}) (for dependency passing in future)
             
+            # Pass the DynamicState which now contains 'depth' to the worker
+            current_depth = s.get("depth", 0)
+            print(f"💉 [GraphCompiler] Node {_id} using depth: {current_depth}")
             result = await generic_worker_node(s, _instr, _type)
             
             # Return ONLY the update for the results channel
@@ -92,8 +99,11 @@ async def graph_compiler_node(state: AgentState) -> Dict[str, Any]:
     
     # 7. Execute
     print("▶️ Executing Dynamic Graph...")
-    # Initialize with empty results
-    initial_dynamic_state = {"results": {}} 
+    # Initialize with depth from parent state
+    initial_dynamic_state = {
+        "results": {},
+        "depth": state.get("depth", 0)
+    } 
     
     final_dynamic_state = await app.ainvoke(initial_dynamic_state)
     
