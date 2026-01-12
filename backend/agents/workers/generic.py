@@ -4,16 +4,33 @@ from agents.dependencies import llm, llm_mini
 async def generate_dynamic_system_prompt(instruction: str, agent_type: str) -> str:
     """
     Generates a personalized system prompt using a faster/cheaper LLM.
+    Includes information about available tools based on agent type.
     """
+    # Define tool context based on agent type
+    tool_context = ""
+    if agent_type.lower() == "orchestrator":
+        tool_context = """
+    
+    IMPORTANT - You have access to the following tool:
+    - spawn_subgraph(task: str): Use this tool when YOUR assigned task is too complex to complete in a single response. 
+      It will spawn a separate workflow to handle that sub-problem. Only use this if the task genuinely requires 
+      multiple coordinated steps that you cannot do alone."""
+    elif agent_type.lower() == "researcher":
+        tool_context = """
+    
+    IMPORTANT - You have access to the following tool:
+    - web_search(query: str): Use this to search for information online."""
+
     meta_prompt = f"""You are an expert Prompt Engineer.
     Your goal is to create a high-quality system prompt for an AI agent acting as a "{agent_type}".
     
     The user's instruction to the agent is: "{instruction}"
+    {tool_context}
     
     Create a system prompt that STRICTLY follows the "Tagged Prompt" pattern:
     1. <role>: Define the persona, expertise, and behavioral tone.
     2. <objective>: A clear, single-sentence high-level goal.
-    3. <constraints>: A checklist of technical, logical, and formatting rules.
+    3. <constraints>: A checklist of technical, logical, and formatting rules. If tools are available, include when to use them.
     
     You must also instruct the agent that it will receive its input in a <task> tag, and if provided, specific data in an <input_data> tag.
     
