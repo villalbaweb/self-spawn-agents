@@ -34,7 +34,4 @@ llm_mini = ChatOpenAI(
 search = GoogleSerperAPIWrapper(k=10) 
 
 # Configuration
-MAX_RECURSION_DEPTH = int(os.getenv("MAX_RECURSION_DEPTH", "3")) 
-
-# Configuration
-MAX_RECURSION_DEPTH = int(os.getenv("MAX_RECURSION_DEPTH", "3")) 
+MAX_RECURSION_DEPTH = int(os.getenv("MAX_RECURSION_DEPTH", "3"))
