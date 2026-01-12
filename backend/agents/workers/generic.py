@@ -7,11 +7,21 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str) ->
     """
     print(f"🤖 {agent_type} working on: {instruction}")
     
-    sys_prompt = f"Role: You are an expert {agent_type}. Perform the requested task efficiently."
+    sys_prompt = f"""<role>Expert {agent_type}</role>
+<objective>Execute the user's instruction with high precision and expertise.</objective>
+<constraints>
+- Output the result directly.
+- Maintain a professional and technical tone.
+- Do not include fluff or unnecessary conversational filler.
+</constraints>"""
+
+    user_content = f"""<task>
+{instruction}
+</task>"""
     
     messages = [
         SystemMessage(content=sys_prompt),
-        HumanMessage(content=instruction)
+        HumanMessage(content=user_content)
     ]
     
     try:
