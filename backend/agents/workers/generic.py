@@ -20,6 +20,12 @@ async def generate_dynamic_system_prompt(instruction: str, agent_type: str) -> s
     
     IMPORTANT - You have access to the following tool:
     - web_search(query: str): Use this to search for information online."""
+    elif agent_type.lower() == "coder":
+        tool_context = """
+    
+    IMPORTANT - You have access to the following tool:
+    - python_repl(code: str): Use this to execute Python code for calculations, data processing, or generating outputs.
+      The code MUST print results to stdout. Always use this tool when asked to "calculate", "compute", or "write a script"."""
 
     meta_prompt = f"""You are an expert Prompt Engineer.
     Your goal is to create a high-quality system prompt for an AI agent acting as a "{agent_type}".
@@ -47,6 +53,7 @@ async def generate_dynamic_system_prompt(instruction: str, agent_type: str) -> s
 
 from agents.tools.subgraph import spawn_subgraph
 from agents.tools.web_search import web_search
+from agents.tools.python_repl import python_repl
 
 async def generic_worker_node(state: dict, instruction: str, agent_type: str) -> dict:
     """
@@ -91,7 +98,8 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str) ->
             tools = [spawn_subgraph]
         elif agent_type.lower() == "researcher":
             tools = [web_search]
-        # Coder and Reviewer get no tools - they must complete tasks directly
+        elif agent_type.lower() == "coder":
+            tools = [python_repl]
             
         llm_with_tools = llm.bind_tools(tools) if tools else llm
         
@@ -126,6 +134,11 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str) ->
                 tool_args = tool_call["args"]
                 tool_output = web_search.run(tool_args["query"])
                 return {"output": f"Search Results:\n{tool_output}"}
+            
+            elif tool_call["name"] == "python_repl":
+                tool_args = tool_call["args"]
+                tool_output = await python_repl.ainvoke(tool_args)
+                return {"output": f"Python Execution:\n{tool_output}"}
         
         return {"output": response.content}
     except Exception as e:

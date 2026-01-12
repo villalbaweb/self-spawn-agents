@@ -5,6 +5,7 @@ def replace(a: Any, b: Any) -> Any:
 
 class AgentState(TypedDict):
     task: str # High-level user prompt
+    subject: str # Primary subject/product extracted from task (for drift prevention)
     subtasks: List[str] # Decomposed subtasks
     graph_plan: Dict[str, Any] # Planned LangGraph nodes and edges
     results: Dict[str, str] # Results from executed nodes

@@ -78,7 +78,8 @@ async def run_orchestrator(request: OrchestratorRequest):
         try:
             initial_state = {
                 "task": request.task, 
-                "subtasks": []
+                "subtasks": [],
+                "subject": ""
             }
             
             # Use astream_events to track node transitions

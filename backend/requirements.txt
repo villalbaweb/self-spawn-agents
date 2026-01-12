@@ -11,3 +11,4 @@ python-dotenv
 requests
 trafilatura
 httpx
+e2b-code-interpreter

@@ -13,6 +13,7 @@ class DynamicState(TypedDict):
     # Use a reducer to allow parallel updates to merge
     results: Annotated[Dict[str, str], merge_dicts]
     depth: Annotated[int, replace]
+    subject: str  # Primary subject for drift prevention
 
 async def graph_compiler_node(state: AgentState) -> Dict[str, Any]:
     """
@@ -60,12 +61,16 @@ async def graph_compiler_node(state: AgentState) -> Dict[str, Any]:
                         context_parts.append(f"<input_data source=\"{dep_id}\">\n{truncated}\n</input_data>")
                         
             # Inject context into instruction
+            # Include subject for drift prevention
+            subject = s.get("subject", "")
+            subject_block = f"<subject>{subject}</subject>\n" if subject else ""
+            
             if context_parts:
                 context_block = "\n".join(context_parts)
-                enriched_instruction = f"{context_block}\n\n<task>\n{_instr}\n</task>"
+                enriched_instruction = f"{subject_block}{context_block}\n\n<task>\n{_instr}\n</task>"
                 print(f"📎 [Context] Injecting {len(_deps)} parent result(s) into '{_id}'")
             else:
-                enriched_instruction = _instr
+                enriched_instruction = f"{subject_block}<task>\n{_instr}\n</task>" if subject else _instr
             
             current_depth = s.get("depth", 0)
             result = await generic_worker_node(s, enriched_instruction, _type)
@@ -109,7 +114,8 @@ async def graph_compiler_node(state: AgentState) -> Dict[str, Any]:
     print("▶️ Executing Dynamic Graph...")
     initial_dynamic_state = {
         "results": {},
-        "depth": state.get("depth", 0)
+        "depth": state.get("depth", 0),
+        "subject": state.get("subject", "")
     } 
     
     final_dynamic_state = await app.ainvoke(initial_dynamic_state)
