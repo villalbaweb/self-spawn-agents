@@ -46,8 +46,16 @@ async def decompose_handler(request: DecomposeRequest):
     result = await semantic_splitter_node({"task": request.task, "subtasks": []})
     return {"status": "success", "subtasks": result.get("subtasks", [])}
 
+import asyncio
+from typing import Dict
+from uuid import uuid4
+
+# Global registry for running tasks
+running_tasks: Dict[str, asyncio.Task] = {}
+
 class OrchestratorRequest(BaseModel):
     task: str
+    request_id: Optional[str] = None
 
 @app.post("/api/run")
 async def run_orchestrator(request: OrchestratorRequest):
@@ -56,7 +64,17 @@ async def run_orchestrator(request: OrchestratorRequest):
     """
     print(f"Received orchestrator run request for: {request.task}")
 
+    # Use provided ID or generate one
+    req_id = request.request_id or str(uuid4())
+    print(f"🆔 Request ID: {req_id}")
+
     async def event_generator():
+        # Register current task
+        current_task = asyncio.current_task()
+        if current_task:
+            running_tasks[req_id] = current_task
+            print(f"✅ Registered task {req_id}")
+
         try:
             initial_state = {
                 "task": request.task, 
@@ -94,8 +112,33 @@ async def run_orchestrator(request: OrchestratorRequest):
                     if results:
                          yield f"data: {json.dumps({'type': 'result', 'results': results})}\n\n"
 
+        except asyncio.CancelledError:
+            print(f"🚫 Task {req_id} was cancelled.")
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Task was cancelled/interrupted.'})}\n\n"
+            # Re-raise to ensure proper task cancellation propagation if needed, 
+            # though usually yielding stops the generator consumption.
+            raise 
+
         except Exception as e:
             print(f"Error in event_generator: {e}")
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            
+        finally:
+            # Cleanup
+            if req_id in running_tasks:
+                del running_tasks[req_id]
+                print(f"🧹 Unregistered task {req_id}")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.post("/api/cancel/{request_id}")
+async def cancel_orchestrator(request_id: str):
+    """
+    Cancel a running orchestrator task by its request_id.
+    """
+    if request_id in running_tasks:
+        task = running_tasks[request_id]
+        task.cancel()
+        return {"status": "cancelled", "message": f"Task {request_id} has been requested to cancel."}
+    
+    raise HTTPException(status_code=404, detail=f"Task {request_id} not found or not running.")
