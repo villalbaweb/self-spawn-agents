@@ -69,10 +69,11 @@ async def run_orchestrator(request: OrchestratorRequest):
                 name = event.get("name")
                 
                 # We care about when nodes start
-                if kind == "on_chain_start" and name in ["semantic_splitter", "supervisor"]:
+                if kind == "on_chain_start" and name in ["semantic_splitter", "supervisor", "graph_compiler"]:
                     display_names = {
                         "semantic_splitter": "Decomposing task into subtasks...",
                         "supervisor": "Planning execution graph with Supervisor...",
+                        "graph_compiler": "Compiling and Executing Dynamic Graph...",
                     }
                     msg = display_names.get(name, f"Executing {name}...")
                     yield f"data: {json.dumps({'type': 'progress', 'message': msg})}\n\n"
@@ -82,12 +83,16 @@ async def run_orchestrator(request: OrchestratorRequest):
                     final_output = event.get("data", {}).get("output", {})
                     subtasks = final_output.get("subtasks", [])
                     graph_plan = final_output.get("graph_plan", {})
+                    results = final_output.get("results", {})
                     
                     if subtasks:
                          yield f"data: {json.dumps({'type': 'result', 'subtasks': subtasks})}\n\n"
                     
                     if graph_plan:
                          yield f"data: {json.dumps({'type': 'result', 'graph_plan': graph_plan})}\n\n"
+
+                    if results:
+                         yield f"data: {json.dumps({'type': 'result', 'results': results})}\n\n"
 
         except Exception as e:
             print(f"Error in event_generator: {e}")

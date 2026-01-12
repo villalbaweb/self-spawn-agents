@@ -10,27 +10,34 @@ from agent import app_graph
 from agents.state import AgentState
 
 async def test_graph_direct():
-    print("🚀 Testing Orchestrator Graph Direct Execution (Module 2)...")
+    print("🚀 Testing Full Orchestrator (Modules 1 + 2 + 3)...")
     
+    # We use a simple task to avoid expensive LLM calls if possible, 
+    # but semantic splitter prompts are hardcoded to real models.
     initial_state = AgentState(
-        task="Direct Graph Test: Build invoice extraction",
+        task="Create a hello world python script",
         subtasks=[],
-        graph_plan={}
+        graph_plan={},
+        results={}
     )
 
     try:
+        print("▶️ Invoking Graph...")
         final_state = await app_graph.ainvoke(initial_state)
         
         subtasks = final_state.get("subtasks", [])
         graph_plan = final_state.get("graph_plan", {})
+        results = final_state.get("results", {})
         
-        print(f"✅ Executed. Subtasks: {len(subtasks)}")
+        print(f"\n✅ Execution Complete.")
+        print(f"Subtasks: {len(subtasks)}")
+        print(f"Plan Nodes: {len(graph_plan.get('nodes', []))}")
+        print(f"Results: {len(results)}")
         
-        if graph_plan:
-            print(f"✅ Graph Plan Generated: {len(graph_plan.get('nodes', []))} nodes")
-            print(json.dumps(graph_plan, indent=2))
+        if results:
+            print(json.dumps(results, indent=2))
         else:
-            print("❌ No Graph Plan generated.")
+            print("❌ No Results generated.")
             sys.exit(1)
             
     except Exception as e:
