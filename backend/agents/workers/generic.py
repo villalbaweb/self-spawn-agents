@@ -29,6 +29,7 @@ async def generate_dynamic_system_prompt(instruction: str, agent_type: str) -> s
     return response.content
 
 from agents.tools.subgraph import spawn_subgraph
+from agents.tools.web_search import web_search
 
 async def generic_worker_node(state: dict, instruction: str, agent_type: str) -> dict:
     """
@@ -61,8 +62,14 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str) ->
     ]
     
     try:
-        # Bind tools
+        # Bind tools based on agent type
+        # Default: just recursion
         tools = [spawn_subgraph]
+        
+        # Researcher: gets web search + recursion
+        if agent_type.lower() == "researcher":
+            tools = [web_search, spawn_subgraph]
+            
         llm_with_tools = llm.bind_tools(tools)
         
         response = await llm_with_tools.ainvoke(messages)
@@ -77,8 +84,17 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str) ->
             tool_call = response.tool_calls[0]
             if tool_call["name"] == "spawn_subgraph":
                 tool_args = tool_call["args"]
+                
+                # INJECT SAFEGUARD: Pass current depth from state to the tool
+                tool_args["depth"] = state.get("depth", 0)
+                
                 tool_output = await spawn_subgraph.ainvoke(tool_args)
                 return {"output": f"Recursion Result:\n{tool_output}"}
+                
+            elif tool_call["name"] == "web_search":
+                tool_args = tool_call["args"]
+                tool_output = web_search.run(tool_args["query"])
+                return {"output": f"Search Results:\n{tool_output}"}
         
         return {"output": response.content}
     except Exception as e:

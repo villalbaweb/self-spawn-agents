@@ -5,3 +5,4 @@ class AgentState(TypedDict):
     subtasks: List[str] # Decomposed subtasks
     graph_plan: Dict[str, Any] # Planned LangGraph nodes and edges
     results: Dict[str, str] # Results from executed nodes
+    depth: int # Current recursion depth (starts at 0)
