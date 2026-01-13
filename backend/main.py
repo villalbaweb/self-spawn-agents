@@ -79,7 +79,8 @@ async def run_orchestrator(request: OrchestratorRequest):
             initial_state = {
                 "task": request.task, 
                 "subtasks": [],
-                "subject": ""
+                "subject": "",
+                "deliverables": []
             }
             
             # Use astream_events to track node transitions
@@ -88,11 +89,12 @@ async def run_orchestrator(request: OrchestratorRequest):
                 name = event.get("name")
                 
                 # We care about when nodes start
-                if kind == "on_chain_start" and name in ["semantic_splitter", "supervisor", "graph_compiler"]:
+                if kind == "on_chain_start" and name in ["semantic_splitter", "supervisor", "graph_compiler", "synthesizer"]:
                     display_names = {
                         "semantic_splitter": "Decomposing task into subtasks...",
                         "supervisor": "Planning execution graph with Supervisor...",
                         "graph_compiler": "Compiling and Executing Dynamic Graph...",
+                        "synthesizer": "Synthesizing final report...",
                     }
                     msg = display_names.get(name, f"Executing {name}...")
                     yield f"data: {json.dumps({'type': 'progress', 'message': msg})}\n\n"
@@ -103,6 +105,7 @@ async def run_orchestrator(request: OrchestratorRequest):
                     subtasks = final_output.get("subtasks", [])
                     graph_plan = final_output.get("graph_plan", {})
                     results = final_output.get("results", {})
+                    synthesis = final_output.get("synthesis", "")
                     
                     if subtasks:
                          yield f"data: {json.dumps({'type': 'result', 'subtasks': subtasks})}\n\n"
@@ -112,6 +115,9 @@ async def run_orchestrator(request: OrchestratorRequest):
 
                     if results:
                          yield f"data: {json.dumps({'type': 'result', 'results': results})}\n\n"
+                    
+                    if synthesis:
+                         yield f"data: {json.dumps({'type': 'synthesis', 'markdown': synthesis})}\n\n"
 
         except asyncio.CancelledError:
             print(f"🚫 Task {req_id} was cancelled.")
