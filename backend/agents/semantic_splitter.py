@@ -19,18 +19,21 @@ async def semantic_splitter_node(state: AgentState) -> Dict[str, Any]:
     task = state.get("task", "") or state.get("query", "")
     print(f"🧠 Decomposing: {task}")
     
-    # Improved prompt with subject and deliverables extraction
+    # Improved prompt with subject and deliverables extraction + search optimization
     sys_prompt = """<role>Expert Task Decomposer</role>
-<objective>Analyze the user's task, extract the primary subject, required deliverables, and break it down into atomic subtasks.</objective>
+<objective>Analyze the user's task, extract the primary subject, required deliverables, and break it down into atomic subtasks optimized for information retrieval.</objective>
 <constraints>
 - Output a JSON object with "subject", "subtasks", and "deliverables".
-- CRITICAL: Extract the SPECIFIC subject (e.g., "luxury e-bikes" NOT "vehicles").
+- CRITICAL: Extract the SPECIFIC subject mentioned in the task (preserve exact terminology).
 - Extract EXPLICIT deliverables mentioned in the task (e.g., "PDF", "script", "roadmap", "summary").
 - Each subtask should start with a verb.
 - Max 5 subtasks.
-- Keep subtasks concise and clear.
+- SEARCH OPTIMIZATION: Subtasks may be used as search queries. Make them specific and actionable:
+  - Include the subject and relevant context (location, industry, etc.) when mentioned in the task
+  - Prefer concrete terms (companies, products, examples) over abstract terms (regulations, frameworks)
+  - Format as natural questions or search phrases that would return useful results
 </constraints>
-<task>Decompose the input into subtasks while preserving the specific subject and identifying deliverables.</task>"""
+<task>Decompose the input into actionable subtasks while preserving the specific subject and identifying deliverables.</task>"""
 
     messages = [
         SystemMessage(content=sys_prompt),
