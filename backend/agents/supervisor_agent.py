@@ -11,6 +11,7 @@ class NodeSchema(BaseModel):
     agent_type: str = Field(..., description="The type of agent needed (e.g., 'Researcher', 'Coder', 'Reviewer').")
     instruction: str = Field(..., description="Specific instruction for this node.")
     dependencies: List[str] = Field(default_factory=list, description="IDs of nodes that must complete before this one starts.")
+    recursive: bool = Field(default=False, description="If true, this node spawns a full sub-orchestration pipeline for complex multi-step tasks.")
 
 class GraphPlan(BaseModel):
     nodes: List[NodeSchema] = Field(..., description="List of nodes in the execution graph.")
@@ -39,6 +40,8 @@ You have the following Agent Types available:
 - **Coder**: writes, edits, or debugs code.
 - **Reviewer**: critiques code or plans.
 - **Orchestrator**: coordinates complex multi-step flows.
+
+Each node can optionally have `recursive: true` which spawns a FULL sub-orchestration pipeline.
 </context>
 <constraints>
 - Output a JSON structure with 'nodes'.
@@ -47,6 +50,18 @@ You have the following Agent Types available:
 - IMPORTANT: Limit the graph to a MAXIMUM of 3 nodes to prevent resource explosion.
 - If more than 3 subtasks exist, consolidate them into 3 or fewer logical groups.
 </constraints>
+<recursive_guidance>
+Use `recursive: true` ONLY when a subtask genuinely requires MULTI-STEP ORCHESTRATION (e.g., "build an API" needs research, coding, testing).
+DO NOT use recursive for:
+- Simple research tasks (use Researcher)
+- Single coding tasks (use Coder)
+- Reviews (use Reviewer)
+
+SAFEGUARDS:
+- Maximum 1 recursive node per plan to prevent explosion.
+- The recursive sub-orchestration will stay focused on its specific subtask.
+- Prefer simpler agent types unless complexity truly requires orchestration.
+</recursive_guidance>
 <task>Create a plan for the user's request based on the subtasks.</task>"""
 
     user_content = f"Original Task: {task}\n\nSubtasks:\n" + "\n".join(f"- {s}" for s in subtasks)
