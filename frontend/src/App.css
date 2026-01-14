@@ -341,3 +341,100 @@ body {
   font-size: 12px;
   color: #ff6b6b;
 }
+
+/* Synthesis Overlay */
+.synthesis-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  backdrop-filter: blur(8px);
+}
+
+.synthesis-modal {
+  background: #1e272e;
+  width: 80%;
+  max-width: 900px;
+  max-height: 85vh;
+  border-radius: 12px;
+  border: 1px solid #0be881;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+  animation: modal-pop 0.3s ease-out;
+}
+
+@keyframes modal-pop {
+  from {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.synthesis-header {
+  padding: 20px;
+  border-bottom: 1px solid #2f3640;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.synthesis-header h2 {
+  margin: 0;
+  color: #0be881;
+  font-size: 1.5rem;
+}
+
+.synthesis-body {
+  padding: 30px;
+  overflow-y: auto;
+  font-size: 16px;
+  line-height: 1.6;
+  color: #d2dae2;
+  white-space: pre-wrap;
+}
+
+.synthesis-body p {
+  margin-bottom: 16px;
+}
+
+/* Synthesis Button */
+.synthesis-btn {
+  background: transparent;
+  border: 1px solid #0be881;
+  color: #0be881;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s;
+}
+
+.synthesis-btn:hover {
+  background: rgba(11, 232, 129, 0.1);
+}
+
+/* Resolution Result Text */
+.result-text {
+  background: #1e272e !important;
+  border-left: 4px solid #05c46b !important;
+  color: #d2dae2 !important;
+  max-height: 400px;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.5;
+}

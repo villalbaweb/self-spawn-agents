@@ -120,6 +120,7 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                     "role": "SubOrchestrator",
                     "system_prompt": f"Recursive orchestration for: {_instr[:200]}",
                     "instruction": _instr,
+                    "output": result_summary,
                     "tools": [],
                     "depth": current_depth
                 }
@@ -262,6 +263,7 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 "role": meta.get("agent_role", node["agent_type"]),
                 "system_prompt": meta.get("system_prompt", ""),
                 "instruction": node["instruction"],
+                "output": final_dynamic_state.get("results", {}).get(nid, ""),
                 "tools": meta.get("tools", []),
                 "depth": current_depth
             }

@@ -12,6 +12,7 @@ interface AgentInfo {
   role: string;
   system_prompt: string;
   instruction: string;
+  output?: string; // Add output field
   tools: string[];
   depth?: number;
   // Rich metadata from backend
@@ -39,6 +40,8 @@ function App() {
   // Graph State
   const [elements, setElements] = useState<any[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<AgentInfo | null>(null);
+  const [synthesis, setSynthesis] = useState<string | null>(null); // State for final report
+  const [showSynthesis, setShowSynthesis] = useState<boolean>(false);
   const [allAgents, setAllAgents] = useState<AgentInfo[]>([]);
 
   // Ref to access current agents in event handlers (avoids stale closure)
@@ -60,6 +63,8 @@ function App() {
     setError('');
     setElements([]);
     setSelectedAgent(null);
+    setSynthesis(null);
+    setShowSynthesis(false);
     setAllAgents([]);
 
     try {
@@ -100,6 +105,8 @@ function App() {
               }
               else if (data.type === 'synthesis') {
                 setLogs(prev => [...prev, `[DONE] Report synthesized`]);
+                setSynthesis(data.markdown);
+                setShowSynthesis(true);
               }
               else if (data.type === 'error') {
                 setLogs(prev => [...prev, `[ERROR] ${data.message}`]);
@@ -238,6 +245,12 @@ function App() {
           <button className="run-btn" onClick={startRun} disabled={isRunning}>
             {isRunning ? 'Running...' : '▶ Start Run'}
           </button>
+
+          {synthesis && (
+            <button className="synthesis-btn" onClick={() => setShowSynthesis(true)}>
+              📝 Final Report
+            </button>
+          )}
         </div>
       </header>
 
@@ -314,6 +327,13 @@ function App() {
               )}
 
               <div className="field-group">
+                <label>Resolution Result</label>
+                <div className="text-block result-text">
+                  {selectedAgent.output || "No output recorded yet."}
+                </div>
+              </div>
+
+              <div className="field-group">
                 <label>Instruction</label>
                 <div className="text-block">{selectedAgent.instruction}</div>
               </div>
@@ -337,6 +357,22 @@ function App() {
               <div className="field-group">
                 <label>System Prompt</label>
                 <pre className="code-block">{selectedAgent.system_prompt}</pre>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* Final Synthesis Overlay */}
+        {showSynthesis && synthesis && (
+          <div className="synthesis-overlay">
+            <div className="synthesis-modal">
+              <div className="synthesis-header">
+                <h2>Final Task Resolution</h2>
+                <button className="close-btn" onClick={() => setShowSynthesis(false)}>×</button>
+              </div>
+              <div className="synthesis-body">
+                {synthesis.split('\n').map((line, i) => (
+                  <p key={i}>{line}</p>
+                ))}
               </div>
             </div>
           </div>
