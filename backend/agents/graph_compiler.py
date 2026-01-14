@@ -256,14 +256,21 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
         nid = node["id"]
         if nid in execution_metadata:
             meta = execution_metadata[nid]
-            new_agents.append({
+            # Build agent info with ALL metadata fields
+            agent_data = {
                 "id": nid,
                 "role": meta.get("agent_role", node["agent_type"]),
                 "system_prompt": meta.get("system_prompt", ""),
                 "instruction": node["instruction"],
                 "tools": meta.get("tools", []),
                 "depth": current_depth
-            })
+            }
+            # Spread standard metadata keys if they exist
+            for key in ["status", "execution_time_seconds", "tool_used", "tools_available", "error_message"]:
+                if key in meta:
+                    agent_data[key] = meta[key]
+            
+            new_agents.append(agent_data)
     
     # Build edge dicts
     new_edges = [{"source": e.source, "target": e.target, "depth": current_depth} for e in blueprint_edges]

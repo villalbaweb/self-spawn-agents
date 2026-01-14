@@ -125,10 +125,8 @@ function App() {
 
     const nodes = agents.map((agent) => ({
       data: {
-        id: agent.id,
+        ...agent, // Spread ALL agent data (metadata, etc.)
         label: `${agent.role}\n${agent.id.substring(0, 12)}`,
-        role: agent.role,
-        depth: agent.depth || 0
       },
       style: {
         'background-color': getColorByRole(agent.role),
@@ -137,7 +135,11 @@ function App() {
     }));
 
     const edgeElements = edges.map((edge) => ({
-      data: { source: edge.source, target: edge.target }
+      data: {
+        source: edge.source,
+        target: edge.target,
+        type: (edge as any).type // hierarchy marker
+      }
     }));
 
     setElements([...nodes, ...edgeElements]);
@@ -167,7 +169,14 @@ function App() {
     }
   };
 
-  const layout = { name: 'dagre', rankDir: 'TB', nodeSep: 80, rankSep: 100 };
+  const layout = {
+    name: 'dagre',
+    rankDir: 'TB',
+    nodeSep: 150,
+    rankSep: 150,
+    edgeSep: 50,
+    padding: 100
+  };
 
   const style = [
     {
@@ -193,7 +202,18 @@ function App() {
         'line-color': '#808e9b',
         'target-arrow-color': '#808e9b',
         'target-arrow-shape': 'triangle',
-        'curve-style': 'bezier'
+        'curve-style': 'taxi', // Use taxi for cleaner routing in hierarchies
+        'taxi-direction': 'vertical',
+        'taxi-turn': 20
+      }
+    },
+    {
+      selector: 'edge[type="hierarchy"]',
+      style: {
+        'line-style': 'dashed',
+        'width': 3,
+        'line-color': '#0be881',
+        'target-arrow-color': '#0be881'
       }
     }
   ];
