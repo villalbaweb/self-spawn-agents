@@ -14,8 +14,8 @@ app = FastAPI(title="Multi-Agent Orchestrator Backend")
 # Read allowed origins from environment variable, fallback to defaults
 env_origins = os.getenv("ALLOWED_ORIGINS", "")
 origins = [origin.strip() for origin in env_origins.split(",") if origin.strip()] or [
-    "https://www.opportunityfinder.villalbai.com",
-    "https://opportunityfinder.villalbai.com",
+    "https://www.agent_forge_studio.villalbai.com",
+    "https://agent_forge_studio.villalbai.com",
     "http://localhost",
     "http://localhost:3000",
     "http://localhost:5173",
