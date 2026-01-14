@@ -287,3 +287,57 @@ body {
   border-radius: 4px;
   font-size: 11px;
 }
+
+.tag.highlight {
+  background: #0be881;
+  color: #1e272e;
+  font-weight: 600;
+}
+
+/* Metrics Row */
+.metrics-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.status-badge {
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-badge.completed {
+  background: rgba(11, 232, 129, 0.2);
+  color: #0be881;
+}
+
+.status-badge.error {
+  background: rgba(255, 107, 107, 0.2);
+  color: #ff6b6b;
+}
+
+.status-badge.unknown {
+  background: rgba(128, 142, 155, 0.2);
+  color: #808e9b;
+}
+
+.metric {
+  font-size: 11px;
+  color: #808e9b;
+}
+
+.error-box {
+  background: rgba(255, 107, 107, 0.1);
+  border: 1px solid #ff6b6b;
+  border-radius: 4px;
+  padding: 10px;
+  margin-bottom: 16px;
+  font-size: 12px;
+  color: #ff6b6b;
+}

@@ -14,6 +14,12 @@ interface AgentInfo {
   instruction: string;
   tools: string[];
   depth?: number;
+  // Rich metadata from backend
+  tool_used?: string | null;
+  execution_time_seconds?: number;
+  status?: string;
+  error_message?: string;
+  tools_available?: string[];
 }
 
 interface EdgeInfo {
@@ -268,24 +274,50 @@ function App() {
             </div>
 
             <div className="inspector-content">
+              {/* Status & Metrics Row */}
+              <div className="metrics-row">
+                <div className={`status-badge ${selectedAgent.status || 'unknown'}`}>
+                  {selectedAgent.status || 'N/A'}
+                </div>
+                {selectedAgent.execution_time_seconds !== undefined && (
+                  <span className="metric">⏱️ {selectedAgent.execution_time_seconds}s</span>
+                )}
+                {selectedAgent.depth !== undefined && (
+                  <span className="metric">📊 Depth: {selectedAgent.depth}</span>
+                )}
+              </div>
+
+              {selectedAgent.error_message && (
+                <div className="error-box">
+                  ⚠️ {selectedAgent.error_message}
+                </div>
+              )}
+
               <div className="field-group">
                 <label>Instruction</label>
                 <div className="text-block">{selectedAgent.instruction}</div>
               </div>
 
+              {selectedAgent.tool_used && (
+                <div className="field-group">
+                  <label>Tool Used</label>
+                  <span className="tag highlight">{selectedAgent.tool_used}</span>
+                </div>
+              )}
+
+              {selectedAgent.tools_available && selectedAgent.tools_available.length > 0 && (
+                <div className="field-group">
+                  <label>Tools Available</label>
+                  <div className="tags">
+                    {selectedAgent.tools_available.map(t => <span key={t} className="tag">{t}</span>)}
+                  </div>
+                </div>
+              )}
+
               <div className="field-group">
                 <label>System Prompt</label>
                 <pre className="code-block">{selectedAgent.system_prompt}</pre>
               </div>
-
-              {selectedAgent.tools && selectedAgent.tools.length > 0 && (
-                <div className="field-group">
-                  <label>Tools</label>
-                  <div className="tags">
-                    {selectedAgent.tools.map(t => <span key={t} className="tag">{t}</span>)}
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         )}

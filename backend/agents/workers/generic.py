@@ -2,23 +2,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from agents.dependencies import llm, llm_mini
 from langchain_core.runnables import RunnableConfig
 import re
-import json
-
-def _extract_nested_agents(tool_output: str) -> list:
-    """Extract all_agents from spawn_subgraph JSON output."""
-    try:
-        data = json.loads(tool_output)
-        return data.get("all_agents", [])
-    except:
-        return []
-
-def _extract_nested_edges(tool_output: str) -> list:
-    """Extract all_edges from spawn_subgraph JSON output."""
-    try:
-        data = json.loads(tool_output)
-        return data.get("all_edges", [])
-    except:
-        return []
+import time
 
 async def generate_dynamic_system_prompt(instruction: str, agent_type: str, config: RunnableConfig = None) -> str:
     """
@@ -75,7 +59,6 @@ async def generate_dynamic_system_prompt(instruction: str, agent_type: str, conf
         
     return response.content
 
-from agents.tools.subgraph import spawn_subgraph
 from agents.tools.web_search import web_search
 from agents.tools.python_repl import python_repl
 
@@ -115,15 +98,16 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
 
     try:
         # Bind tools based on agent type
-        # STRUCTURAL LIMIT: Only Orchestrator can spawn sub-agents to prevent exponential branching
+        # Note: Orchestrator no longer uses spawn_subgraph - recursion is now via supervisor planning
         tools = []
+        start_time = time.time()
+        tool_used = None
         
-        if agent_type.lower() == "orchestrator":
-            tools = [spawn_subgraph]
-        elif agent_type.lower() == "researcher":
+        if agent_type.lower() == "researcher":
             tools = [web_search]
         elif agent_type.lower() == "coder":
             tools = [python_repl]
+        # Orchestrator has no tools - recursion is handled via recursive nodes in graph_compiler
             
         llm_with_tools = llm.bind_tools(tools) if tools else llm
         
@@ -135,124 +119,107 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
         
         # Check for tool calls
         if response.tool_calls:
-            print(f"🛠️ Tool Call Detected: {response.tool_calls[0]['name']}")
-            # Execute tool call manually (simple tool node logic)
-            # In a real LangGraph agent we'd let the graph handle this, but here we do a simple linear execution 
-            # since generic_worker is a single node wrapped in a function.
-            
             tool_call = response.tool_calls[0]
-            if tool_call["name"] == "spawn_subgraph":
-                tool_args = tool_call["args"]
-                
-                # INJECT SAFEGUARD: Pass current depth from state to the tool
-                tool_args["depth"] = state.get("depth", 0)
-                
-                if config:
-                    tool_output = await spawn_subgraph.ainvoke(tool_args, config=config)
-                else:
-                    tool_output = await spawn_subgraph.ainvoke(tool_args)
-                
-                # Check if depth limit was hit - if so, complete task directly
-                if "DEPTH LIMIT REACHED" in tool_output:
-                    print("🔄 Depth limit hit. Completing task directly without delegation...")
-                    # Re-invoke LLM without tools to force direct completion
-                    if config:
-                        direct_response = await llm.ainvoke(messages, config=config)
-                    else:
-                        direct_response = await llm.ainvoke(messages)
-                        
-                    return {
-                        "output": f"[Completed directly due to depth limit]\n{direct_response.content}",
-                        "metadata": {
-                            "system_prompt": sys_prompt,
-                            "agent_role": agent_type,
-                            "instruction": instruction
-                        }
-                    }
-                
-                return {
-                    "output": f"Recursion Result:\n{tool_output}",
-                    "metadata": {
-                        "system_prompt": sys_prompt,
-                        "agent_role": agent_type,
-                        "instruction": instruction
-                    },
-                    # Extract nested graph data from subgraph result for aggregation
-                    "nested_agents": _extract_nested_agents(tool_output),
-                    "nested_edges": _extract_nested_edges(tool_output)
-                }
-                
-            elif tool_call["name"] == "web_search":
+            tool_name = tool_call["name"]
+            print(f"🛠️ Tool Call Detected: {tool_name}")
+            tool_used = tool_name
+            
+            if tool_name == "web_search":
                 tool_args = tool_call["args"]
                 original_query = tool_args["query"]
                 
-                # web_search might be a Tool, lets try ainvoke with config
-                # If it fails, we fall back to run, but standard tools support ainvoke
                 if config:
                      tool_output = await web_search.ainvoke(original_query, config=config)
                 else:
                      tool_output = await web_search.ainvoke(original_query)
                 
-                # OPTIMIZATION 2: Auto-refinement when Missing: metadata detected
+                # Auto-refinement when Missing: metadata detected
                 if "[SEARCH_METADATA]" in tool_output:
                     missing_match = re.search(r'Missing terms not found.*?:\s*([^\n]+)', tool_output)
                     if missing_match:
                         missing_terms = missing_match.group(1).strip()
-                        # Extract subject from state if available
                         subject = state.get("subject", "")
-                        
-                        # Generate refined query with missing terms
                         refined_query = f"{subject} {missing_terms} retailers brands companies stores"
                         print(f"🔄 Auto-refining search for missing terms: {missing_terms}")
                         
-                        # Execute refined search
                         if config:
                             refined_output = await web_search.ainvoke(refined_query, config=config)
                         else:
                             refined_output = await web_search.ainvoke(refined_query)
                         
-                        # Append refined results
                         tool_output += f"\n\n[REFINED SEARCH for: {missing_terms}]\n{refined_output}"
                 
+                execution_time = time.time() - start_time
                 return {
                     "output": f"Search Results:\n{tool_output}",
                     "metadata": {
                         "system_prompt": sys_prompt,
                         "agent_role": agent_type,
-                        "instruction": instruction
+                        "instruction": instruction,
+                        "tool_used": tool_used,
+                        "execution_time_seconds": round(execution_time, 2),
+                        "depth": current_depth,
+                        "status": "completed",
+                        "tools_available": ["web_search"]
                     }
                 }
             
-            elif tool_call["name"] == "python_repl":
+            elif tool_name == "python_repl":
                 tool_args = tool_call["args"]
                 if config:
                     tool_output = await python_repl.ainvoke(tool_args, config=config)
                 else:
                     tool_output = await python_repl.ainvoke(tool_args)
 
+                execution_time = time.time() - start_time
                 return {
                     "output": f"Python Execution:\n{tool_output}",
                     "metadata": {
                         "system_prompt": sys_prompt,
                         "agent_role": agent_type,
-                        "instruction": instruction
+                        "instruction": instruction,
+                        "tool_used": "python_repl",
+                        "execution_time_seconds": round(execution_time, 2),
+                        "depth": current_depth,
+                        "status": "completed",
+                        "tools_available": ["python_repl"]
                     }
                 }
         
+        # No tool call - direct LLM response
+        execution_time = time.time() - start_time
+        tools_available = []
+        if agent_type.lower() == "researcher":
+            tools_available = ["web_search"]
+        elif agent_type.lower() == "coder":
+            tools_available = ["python_repl"]
+            
         return {
             "output": response.content,
             "metadata": {
                 "system_prompt": sys_prompt,
                 "agent_role": agent_type,
-                "instruction": instruction
+                "instruction": instruction,
+                "tool_used": None,
+                "execution_time_seconds": round(execution_time, 2),
+                "depth": current_depth,
+                "status": "completed",
+                "tools_available": tools_available
             }
         }
     except Exception as e:
+        execution_time = time.time() - start_time if 'start_time' in locals() else 0
         return {
             "output": f"Error: {str(e)}",
             "metadata": {
-                "system_prompt": "Error generating prompt",
+                "system_prompt": sys_prompt if 'sys_prompt' in locals() else "Error generating prompt",
                 "agent_role": agent_type,
-                "instruction": instruction
+                "instruction": instruction,
+                "tool_used": None,
+                "execution_time_seconds": round(execution_time, 2),
+                "depth": current_depth if 'current_depth' in locals() else 0,
+                "status": "error",
+                "error_message": str(e),
+                "tools_available": []
             }
         }
