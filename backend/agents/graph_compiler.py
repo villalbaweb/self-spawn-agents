@@ -1,5 +1,6 @@
 from typing import Dict, Any, Annotated, TypedDict, List
 from langgraph.graph import StateGraph, START, END
+from langchain_core.runnables import RunnableConfig
 from agents.state import AgentState
 from agents.workers.generic import generic_worker_node
 from agents.blueprint import AppBlueprint, AgentInfo, EdgeInfo
@@ -21,7 +22,7 @@ class DynamicState(TypedDict):
     subject: str  # Primary subject for drift prevention
     metadata: Annotated[Dict[str, Dict], merge_dicts] # Capture agent metadata
 
-async def graph_compiler_node(state: AgentState) -> Dict[str, Any]:
+async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) -> Dict[str, Any]:
     """
     Compiles and executes a dynamic LangGraph based on the graph_plan.
     Extracts execution blueprint with system prompts for visualization.
@@ -50,6 +51,7 @@ async def graph_compiler_node(state: AgentState) -> Dict[str, Any]:
         
         async def _node_fn(
             s: DynamicState, 
+            config: RunnableConfig, # LangGraph passes this automatically
             _instr=instruction, 
             _type=agent_type, 
             _id=node_id,
@@ -73,7 +75,8 @@ async def graph_compiler_node(state: AgentState) -> Dict[str, Any]:
             
             enriched_instruction = f"{subject_block}" + "\n".join(context_parts) + f"\n\n<task>\n{_instr}\n</task>"
             
-            result = await generic_worker_node(s, enriched_instruction, _type)
+            # Pass config to worker node for tracing
+            result = await generic_worker_node(s, enriched_instruction, _type, config)
             
             # Return result AND metadata
             return {
@@ -125,7 +128,11 @@ async def graph_compiler_node(state: AgentState) -> Dict[str, Any]:
         "metadata": {}
     } 
     
-    final_dynamic_state = await app.ainvoke(initial_dynamic_state)
+    # Pass config to inner graph execution
+    if config:
+        final_dynamic_state = await app.ainvoke(initial_dynamic_state, config=config)
+    else:
+        final_dynamic_state = await app.ainvoke(initial_dynamic_state)
     
     print("✅ Dynamic Graph Execution Complete.")
     

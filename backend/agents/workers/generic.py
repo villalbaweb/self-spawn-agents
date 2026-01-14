@@ -1,8 +1,9 @@
 from langchain_core.messages import SystemMessage, HumanMessage
 from agents.dependencies import llm, llm_mini
+from langchain_core.runnables import RunnableConfig
 import re
 
-async def generate_dynamic_system_prompt(instruction: str, agent_type: str) -> str:
+async def generate_dynamic_system_prompt(instruction: str, agent_type: str, config: RunnableConfig = None) -> str:
     """
     Generates a personalized system prompt using a faster/cheaper LLM.
     Includes information about available tools based on agent type.
@@ -49,14 +50,19 @@ async def generate_dynamic_system_prompt(instruction: str, agent_type: str) -> s
         HumanMessage(content=meta_prompt)
     ]
     
-    response = await llm_mini.ainvoke(messages)
+    # Pass config if provided
+    if config:
+        response = await llm_mini.ainvoke(messages, config=config)
+    else:
+        response = await llm_mini.ainvoke(messages)
+        
     return response.content
 
 from agents.tools.subgraph import spawn_subgraph
 from agents.tools.web_search import web_search
 from agents.tools.python_repl import python_repl
 
-async def generic_worker_node(state: dict, instruction: str, agent_type: str) -> dict:
+async def generic_worker_node(state: dict, instruction: str, agent_type: str, config: RunnableConfig = None) -> dict:
     """
     A generic worker that uses the LLM to perform a task.
     Supports tool calling for recursive subgraphs.
@@ -65,7 +71,7 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str) ->
     
     # Generate dynamic system prompt (keeping existing logic)
     try:
-        sys_prompt = await generate_dynamic_system_prompt(instruction, agent_type)
+        sys_prompt = await generate_dynamic_system_prompt(instruction, agent_type, config)
         if not sys_prompt: raise ValueError("Empty system prompt")
     except Exception as e:
         print(f"⚠️ Failed to generate dynamic prompt ({e}). Using fallback.")
@@ -104,7 +110,11 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str) ->
             
         llm_with_tools = llm.bind_tools(tools) if tools else llm
         
-        response = await llm_with_tools.ainvoke(messages)
+        # Pass config to LLM
+        if config:
+            response = await llm_with_tools.ainvoke(messages, config=config)
+        else:
+            response = await llm_with_tools.ainvoke(messages)
         
         # Check for tool calls
         if response.tool_calls:
@@ -120,13 +130,20 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str) ->
                 # INJECT SAFEGUARD: Pass current depth from state to the tool
                 tool_args["depth"] = state.get("depth", 0)
                 
-                tool_output = await spawn_subgraph.ainvoke(tool_args)
+                if config:
+                    tool_output = await spawn_subgraph.ainvoke(tool_args, config=config)
+                else:
+                    tool_output = await spawn_subgraph.ainvoke(tool_args)
                 
                 # Check if depth limit was hit - if so, complete task directly
                 if "DEPTH LIMIT REACHED" in tool_output:
                     print("🔄 Depth limit hit. Completing task directly without delegation...")
                     # Re-invoke LLM without tools to force direct completion
-                    direct_response = await llm.ainvoke(messages)
+                    if config:
+                        direct_response = await llm.ainvoke(messages, config=config)
+                    else:
+                        direct_response = await llm.ainvoke(messages)
+                        
                     return {
                         "output": f"[Completed directly due to depth limit]\n{direct_response.content}",
                         "metadata": {
@@ -148,7 +165,13 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str) ->
             elif tool_call["name"] == "web_search":
                 tool_args = tool_call["args"]
                 original_query = tool_args["query"]
-                tool_output = web_search.run(original_query)
+                
+                # web_search might be a Tool, lets try ainvoke with config
+                # If it fails, we fall back to run, but standard tools support ainvoke
+                if config:
+                     tool_output = await web_search.ainvoke(original_query, config=config)
+                else:
+                     tool_output = await web_search.ainvoke(original_query)
                 
                 # OPTIMIZATION 2: Auto-refinement when Missing: metadata detected
                 if "[SEARCH_METADATA]" in tool_output:
@@ -163,7 +186,10 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str) ->
                         print(f"🔄 Auto-refining search for missing terms: {missing_terms}")
                         
                         # Execute refined search
-                        refined_output = web_search.run(refined_query)
+                        if config:
+                            refined_output = await web_search.ainvoke(refined_query, config=config)
+                        else:
+                            refined_output = await web_search.ainvoke(refined_query)
                         
                         # Append refined results
                         tool_output += f"\n\n[REFINED SEARCH for: {missing_terms}]\n{refined_output}"
@@ -179,7 +205,11 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str) ->
             
             elif tool_call["name"] == "python_repl":
                 tool_args = tool_call["args"]
-                tool_output = await python_repl.ainvoke(tool_args)
+                if config:
+                    tool_output = await python_repl.ainvoke(tool_args, config=config)
+                else:
+                    tool_output = await python_repl.ainvoke(tool_args)
+
                 return {
                     "output": f"Python Execution:\n{tool_output}",
                     "metadata": {

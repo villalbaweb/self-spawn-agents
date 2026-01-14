@@ -29,17 +29,20 @@ interface AppBlueprint {
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 function App() {
+  const [taskInput, setTaskInput] = useState('Conduct a market entry strategy for a luxury e-bike brand in Mexico. Research ONLY the top 2 competitors.');
+  const [isRunning, setIsRunning] = useState(false);
+  const [logs, setLogs] = useState<string[]>([]);
   const [runId, setRunId] = useState('a971497b-870b-4bb0-bce1-13f46e1de55f'); // Default for demo
   const [blueprint, setBlueprint] = useState<AppBlueprint | null>(null);
   const [elements, setElements] = useState<any[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<AgentInfo | null>(null);
   const [error, setError] = useState<string>('');
 
-  const fetchBlueprint = async () => {
+  const fetchBlueprint = async (id: string = runId) => {
     try {
       setError('');
-      console.log(`Fetching from ${API_URL}/api/run/${runId}/blueprint`);
-      const response = await axios.get(`${API_URL}/api/run/${runId}/blueprint`);
+      console.log(`Fetching from ${API_URL}/api/run/${id}/blueprint`);
+      const response = await axios.get(`${API_URL}/api/run/${id}/blueprint`);
       const data: AppBlueprint = response.data;
       setBlueprint(data);
       console.log("Blueprint loaded:", data);
@@ -67,6 +70,62 @@ function App() {
     } catch (err: any) {
       console.error(err);
       setError(err.response?.data?.error || err.message || 'Failed to fetch blueprint');
+    }
+  };
+
+  const startRun = async () => {
+    setIsRunning(true);
+    setLogs([]);
+    setError('');
+
+    try {
+      const response = await fetch(`${API_URL}/api/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task: taskInput })
+      });
+
+      if (!response.body) throw new Error("No response body");
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+
+              if (data.type === 'progress') {
+                setLogs(prev => [...prev, `[LOG] ${data.message}`]);
+              }
+              else if (data.type === 'blueprint') {
+                setLogs(prev => [...prev, `[SUCCESS] Blueprint Generated: ${data.id}`]);
+                setRunId(data.id);
+                fetchBlueprint(data.id);
+              }
+              else if (data.type === 'error') {
+                setLogs(prev => [...prev, `[ERROR] ${data.message}`]);
+              }
+            } catch (e) {
+              console.warn("Failed to parse SSE line", line);
+            }
+          }
+        }
+      }
+
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setIsRunning(false);
     }
   };
 
@@ -111,21 +170,44 @@ function App() {
     <div className="app-container">
       <header className="header">
         <h1>🔍 agent_forge_studio <span className="beta-tag">Visualizer</span></h1>
+
+        <div className="task-bar">
+          <input
+            className="task-input"
+            placeholder="Describe your agentic task..."
+            value={taskInput}
+            onChange={e => setTaskInput(e.target.value)}
+            disabled={isRunning}
+          />
+          <button className="run-btn" onClick={startRun} disabled={isRunning}>
+            {isRunning ? 'Running...' : '▶ Start Run'}
+          </button>
+        </div>
+
         <div className="control-bar">
           <input
             type="text"
             value={runId}
             onChange={(e) => setRunId(e.target.value)}
-            placeholder="Enter Run ID"
+            placeholder="Run ID"
             className="run-input"
           />
-          <button onClick={fetchBlueprint} className="load-btn">Load Blueprint</button>
+          <button onClick={() => fetchBlueprint(runId)} className="load-btn">Load</button>
         </div>
       </header>
 
       {error && <div className="error-banner">{error}</div>}
 
       <div className="main-content">
+        {/* Logs Panel */}
+        <div className="logs-pane">
+          <h3>Live Execution Logs</h3>
+          <div className="logs-container">
+            {logs.length === 0 && <span className="log-placeholder">Waiting for execution...</span>}
+            {logs.map((log, i) => <div key={i} className="log-line">{log}</div>)}
+          </div>
+        </div>
+
         <div className="graph-pane">
           {elements.length > 0 ? (
             <CytoscapeComponent
