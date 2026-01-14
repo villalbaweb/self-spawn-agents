@@ -104,6 +104,7 @@ function App() {
                 renderUnifiedGraph(data.agents, data.edges);
               }
               else if (data.type === 'synthesis') {
+                console.log('✅ Synthesis report received, length:', data.markdown?.length);
                 setLogs(prev => [...prev, `[DONE] Report synthesized`]);
                 setSynthesis(data.markdown);
                 setShowSynthesis(true);

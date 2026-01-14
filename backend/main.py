@@ -102,8 +102,9 @@ async def run_orchestrator(request: OrchestratorRequest):
                     msg = display_names.get(name, f"Executing {name}...")
                     yield f"data: {json.dumps({'type': 'progress', 'message': msg})}\n\n"
 
-                # Yield final results
-                elif kind == "on_chain_end" and name == "LangGraph":
+                # Yield final results (Root chain end)
+                elif kind == "on_chain_end" and not event.get("parent_ids"):
+                    print(f"🏁 Root chain finished. Captured output keys: {list(event.get('data', {}).get('output', {}).keys())}")
                     final_output = event.get("data", {}).get("output", {})
                     subtasks = final_output.get("subtasks", [])
                     graph_plan = final_output.get("graph_plan", {})
@@ -127,9 +128,11 @@ async def run_orchestrator(request: OrchestratorRequest):
                     all_agents = final_output.get("all_agents", [])
                     all_edges = final_output.get("all_edges", [])
                     if all_agents:
+                        print(f"📡 Emitting unified_graph: {len(all_agents)} agents")
                         yield f"data: {json.dumps({'type': 'unified_graph', 'agents': all_agents, 'edges': all_edges})}\n\n"
 
                     if synthesis:
+                         print(f"📡 Emitting synthesis report ({len(synthesis)} chars)")
                          yield f"data: {json.dumps({'type': 'synthesis', 'markdown': synthesis})}\n\n"
 
 
