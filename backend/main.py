@@ -76,6 +76,9 @@ async def run_orchestrator(request: OrchestratorRequest):
             print(f"✅ Registered task {req_id}")
 
         try:
+            # Emit start event with Run ID immediately
+            yield f"data: {json.dumps({'type': 'start', 'run_id': req_id})}\n\n"
+
             initial_state = {
                 "task": request.task, 
                 "subtasks": [],

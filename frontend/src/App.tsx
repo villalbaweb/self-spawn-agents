@@ -43,12 +43,18 @@ function App() {
       setError('');
       console.log(`Fetching from ${API_URL}/api/run/${id}/blueprint`);
       const response = await axios.get(`${API_URL}/api/run/${id}/blueprint`);
-      const data: AppBlueprint = response.data;
-      setBlueprint(data);
+      const data = response.data;
+
+      // Handle API errors gracefully
+      if (data.error || !data.agents) {
+        throw new Error(data.error || 'Blueprint not ready or invalid format');
+      }
+
+      setBlueprint(data as AppBlueprint);
       console.log("Blueprint loaded:", data);
 
       // Transform to Cytoscape elements
-      const nodes = data.agents.map(agent => ({
+      const nodes = (data.agents || []).map((agent: AgentInfo) => ({
         data: {
           id: agent.id,
           label: `${agent.role}\n${agent.id}`,
@@ -62,7 +68,7 @@ function App() {
         }
       }));
 
-      const edges = data.edges.map(edge => ({
+      const edges = (data.edges || []).map((edge: EdgeInfo) => ({
         data: { source: edge.source, target: edge.target }
       }));
 
@@ -104,7 +110,11 @@ function App() {
             try {
               const data = JSON.parse(line.slice(6));
 
-              if (data.type === 'progress') {
+              if (data.type === 'start') {
+                console.log("Run started with ID:", data.run_id);
+                setRunId(data.run_id);
+              }
+              else if (data.type === 'progress') {
                 setLogs(prev => [...prev, `[LOG] ${data.message}`]);
               }
               else if (data.type === 'blueprint') {
@@ -123,7 +133,10 @@ function App() {
       }
 
     } catch (e: any) {
-      setError(e.message);
+      console.error("Run failed:", e);
+      setError(e.message || "Unknown error occurred");
+      setLogs(prev => [...prev, `[FATAL ERROR] Connection Failed: ${e.message}`]);
+      setLogs(prev => [...prev, `[HINT] Check if Backend is running at ${API_URL}`]);
     } finally {
       setIsRunning(false);
     }
@@ -197,6 +210,11 @@ function App() {
       </header>
 
       {error && <div className="error-banner">{error}</div>}
+
+      {/* Debug Info */}
+      <div style={{ fontSize: '10px', color: '#888', textAlign: 'center', padding: '5px' }}>
+        API Target: {API_URL} | Status: {isRunning ? 'Running' : 'Idle'} | RunID: {runId}
+      </div>
 
       <div className="main-content">
         {/* Logs Panel */}

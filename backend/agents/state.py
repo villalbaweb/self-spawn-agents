@@ -11,3 +11,4 @@ class AgentState(TypedDict):
     graph_plan: Dict[str, Any] # Planned LangGraph nodes and edges
     results: Dict[str, str] # Results from executed nodes
     depth: Annotated[int, replace] # Current recursion depth (starts at 0)
+    blueprint_id: str # ID of the generated blueprint, if any
