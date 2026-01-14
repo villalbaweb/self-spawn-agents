@@ -36,7 +36,9 @@ Provide your best answer using only the information and capabilities you have no
         "graph_plan": {},
         "results": {},
         "depth": depth + 1,
-        "subject": ""  # Will be extracted by semantic_splitter
+        "subject": "",  # Will be extracted by semantic_splitter
+        "all_agents": [],  # Initialize for aggregation
+        "all_edges": []
     }
     
     try:
@@ -47,19 +49,26 @@ Provide your best answer using only the information and capabilities you have no
         subtasks = final_state.get("subtasks", [])
         subject = final_state.get("subject", "")
         
+        # Extract aggregated graph data from subgraph
+        nested_agents = final_state.get("all_agents", [])
+        nested_edges = final_state.get("all_edges", [])
+        
         # --- FIX 3: VALIDATE RESULTS RELEVANCE ---
         validation_result = await _validate_results(task, subject, results, llm_mini)
         
-        # Summarize output
+        # Summarize output WITH nested graph data
         summary = {
             "subtasks_executed": subtasks,
             "results": results,
-            "validation": validation_result
+            "validation": validation_result,
+            "all_agents": nested_agents,  # Include for parent to aggregate
+            "all_edges": nested_edges
         }
         
         if validation_result.get("is_valid", True) == False:
             print(f"⚠️ Validation Warning: {validation_result.get('issues', [])}")
         
+        print(f"📊 Subgraph returning {len(nested_agents)} agents, {len(nested_edges)} edges")
         return json.dumps(summary, indent=2)
         
     except Exception as e:

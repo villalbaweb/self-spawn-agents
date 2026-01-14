@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import CytoscapeComponent from 'react-cytoscapejs';
 import cytoscape from 'cytoscape';
 import dagre from 'cytoscape-dagre';
@@ -34,6 +34,17 @@ function App() {
   const [elements, setElements] = useState<any[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<AgentInfo | null>(null);
   const [allAgents, setAllAgents] = useState<AgentInfo[]>([]);
+
+  // Ref to access current agents in event handlers (avoids stale closure)
+  const agentsRef = useRef<AgentInfo[]>([]);
+  useEffect(() => {
+    agentsRef.current = allAgents;
+  }, [allAgents]);
+
+  // Debug: Log when selectedAgent changes
+  useEffect(() => {
+    console.log('selectedAgent state changed:', selectedAgent?.role, selectedAgent?.id);
+  }, [selectedAgent]);
 
   const startRun = async () => {
     if (!taskInput) return;
@@ -140,9 +151,13 @@ function App() {
 
   const handleNodeClick = (event: any) => {
     const nodeId = event.target.id();
-    const agent = allAgents.find(a => a.id === nodeId);
+    console.log('Node clicked:', nodeId, 'Available agents:', agentsRef.current.length);
+    const agent = agentsRef.current.find(a => a.id === nodeId);
     if (agent) {
+      console.log('Found agent:', agent.role);
       setSelectedAgent(agent);
+    } else {
+      console.warn('Agent not found for ID:', nodeId);
     }
   };
 
@@ -234,7 +249,16 @@ function App() {
 
         {/* Inspector Pane */}
         {selectedAgent && (
-          <div className="inspector-pane">
+          <div className="inspector-pane" style={{
+            position: 'fixed',
+            right: 0,
+            top: 60,
+            bottom: 0,
+            width: '400px',
+            zIndex: 9999,
+            background: '#2f3640',
+            borderLeft: '3px solid #0be881'
+          }}>
             <div className="inspector-header">
               <div>
                 <h2>{selectedAgent.role}</h2>

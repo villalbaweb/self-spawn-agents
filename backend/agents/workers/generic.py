@@ -2,6 +2,23 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from agents.dependencies import llm, llm_mini
 from langchain_core.runnables import RunnableConfig
 import re
+import json
+
+def _extract_nested_agents(tool_output: str) -> list:
+    """Extract all_agents from spawn_subgraph JSON output."""
+    try:
+        data = json.loads(tool_output)
+        return data.get("all_agents", [])
+    except:
+        return []
+
+def _extract_nested_edges(tool_output: str) -> list:
+    """Extract all_edges from spawn_subgraph JSON output."""
+    try:
+        data = json.loads(tool_output)
+        return data.get("all_edges", [])
+    except:
+        return []
 
 async def generate_dynamic_system_prompt(instruction: str, agent_type: str, config: RunnableConfig = None) -> str:
     """
@@ -159,7 +176,10 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
                         "system_prompt": sys_prompt,
                         "agent_role": agent_type,
                         "instruction": instruction
-                    }
+                    },
+                    # Extract nested graph data from subgraph result for aggregation
+                    "nested_agents": _extract_nested_agents(tool_output),
+                    "nested_edges": _extract_nested_edges(tool_output)
                 }
                 
             elif tool_call["name"] == "web_search":

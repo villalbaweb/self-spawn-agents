@@ -12,6 +12,9 @@ from datetime import datetime
 def merge_dicts(a: Dict, b: Dict) -> Dict:
     return {**a, **b}
 
+def merge_lists(a: list, b: list) -> list:
+    return a + b
+
 def replace(a: Any, b: Any) -> Any:
     return b
 
@@ -21,6 +24,8 @@ class DynamicState(TypedDict):
     depth: Annotated[int, replace]
     subject: str  # Primary subject for drift prevention
     metadata: Annotated[Dict[str, Dict], merge_dicts] # Capture agent metadata
+    all_agents: Annotated[list, merge_lists] # Aggregated agents from all subgraphs
+    all_edges: Annotated[list, merge_lists] # Aggregated edges from all subgraphs
 
 async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) -> Dict[str, Any]:
     """
@@ -78,10 +83,16 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
             # Pass config to worker node for tracing
             result = await generic_worker_node(s, enriched_instruction, _type, config)
             
-            # Return result AND metadata
+            # Extract nested agents/edges from spawn_subgraph calls
+            nested_agents = result.get("nested_agents", [])
+            nested_edges = result.get("nested_edges", [])
+            
+            # Return result AND metadata AND nested graph data
             return {
                 "results": {_id: result["output"]},
-                "metadata": {_id: result.get("metadata", {})}
+                "metadata": {_id: result.get("metadata", {})},
+                "all_agents": nested_agents,
+                "all_edges": nested_edges
             }
             
         workflow.add_node(node_id, _node_fn)
@@ -125,7 +136,9 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
         "results": {},
         "depth": state.get("depth", 0),
         "subject": state.get("subject", ""),
-        "metadata": {}
+        "metadata": {},
+        "all_agents": [],
+        "all_edges": []
     } 
     
     # Pass config to inner graph execution
@@ -188,9 +201,18 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
         print(f"❌ Error generating blueprint: {e}")
         run_id = None
     
+    # Combine local agents with nested agents from subgraph calls
+    nested_agents = final_dynamic_state.get("all_agents", [])
+    nested_edges = final_dynamic_state.get("all_edges", [])
+    
+    combined_agents = new_agents + nested_agents
+    combined_edges = new_edges + nested_edges
+    
+    print(f"📊 graph_compiler returning {len(combined_agents)} total agents ({len(new_agents)} local + {len(nested_agents)} nested)")
+    
     return {
         "results": final_dynamic_state.get("results", {}), 
         "blueprint_id": run_id,
-        "all_agents": new_agents,
-        "all_edges": new_edges
+        "all_agents": combined_agents,
+        "all_edges": combined_edges
     }
