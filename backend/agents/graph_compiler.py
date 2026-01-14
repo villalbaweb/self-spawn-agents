@@ -1,7 +1,12 @@
-from typing import Dict, Any, Annotated, TypedDict
+from typing import Dict, Any, Annotated, TypedDict, List
 from langgraph.graph import StateGraph, START, END
 from agents.state import AgentState
 from agents.workers.generic import generic_worker_node
+from agents.blueprint import AppBlueprint, AgentInfo, EdgeInfo
+import json
+import uuid
+import os
+from datetime import datetime
 
 def merge_dicts(a: Dict, b: Dict) -> Dict:
     return {**a, **b}
@@ -14,14 +19,16 @@ class DynamicState(TypedDict):
     results: Annotated[Dict[str, str], merge_dicts]
     depth: Annotated[int, replace]
     subject: str  # Primary subject for drift prevention
+    metadata: Annotated[Dict[str, Dict], merge_dicts] # Capture agent metadata
 
 async def graph_compiler_node(state: AgentState) -> Dict[str, Any]:
     """
     Compiles and executes a dynamic LangGraph based on the graph_plan.
-    Injects parent node results into dependent node instructions for context continuity.
+    Extracts execution blueprint with system prompts for visualization.
     """
     plan = state.get("graph_plan", {})
     nodes = plan.get("nodes", [])
+    task = state.get("task", "Unknown Task")
     
     if not nodes:
         print("⚠️ No nodes in plan to execute.")
@@ -29,10 +36,10 @@ async def graph_compiler_node(state: AgentState) -> Dict[str, Any]:
         
     print(f"🏗️ Compiling Dynamic Graph with {len(nodes)} nodes...")
 
-    # Build a lookup for node dependencies
-    node_dependencies = {node["id"]: node.get("dependencies", []) for node in nodes}
-
     workflow = StateGraph(DynamicState)
+    
+    # Track edges for blueprint
+    blueprint_edges = []
 
     # Add Nodes with context injection
     for node in nodes:
@@ -61,21 +68,18 @@ async def graph_compiler_node(state: AgentState) -> Dict[str, Any]:
                         context_parts.append(f"<input_data source=\"{dep_id}\">\n{truncated}\n</input_data>")
                         
             # Inject context into instruction
-            # Include subject for drift prevention
             subject = s.get("subject", "")
             subject_block = f"<subject>{subject}</subject>\n" if subject else ""
             
-            if context_parts:
-                context_block = "\n".join(context_parts)
-                enriched_instruction = f"{subject_block}{context_block}\n\n<task>\n{_instr}\n</task>"
-                print(f"📎 [Context] Injecting {len(_deps)} parent result(s) into '{_id}'")
-            else:
-                enriched_instruction = f"{subject_block}<task>\n{_instr}\n</task>" if subject else _instr
+            enriched_instruction = f"{subject_block}" + "\n".join(context_parts) + f"\n\n<task>\n{_instr}\n</task>"
             
-            current_depth = s.get("depth", 0)
             result = await generic_worker_node(s, enriched_instruction, _type)
             
-            return {"results": {_id: result["output"]}}
+            # Return result AND metadata
+            return {
+                "results": {_id: result["output"]},
+                "metadata": {_id: result.get("metadata", {})}
+            }
             
         workflow.add_node(node_id, _node_fn)
     
@@ -91,6 +95,8 @@ async def graph_compiler_node(state: AgentState) -> Dict[str, Any]:
                 if any(n["id"] == parent_id for n in nodes):
                     workflow.add_edge(parent_id, node_id)
                     nodes_with_parents.add(node_id)
+                    # Track for blueprint
+                    blueprint_edges.append(EdgeInfo(source=parent_id, target=node_id))
         
     # Connect Start Nodes
     for node in nodes:
@@ -115,11 +121,56 @@ async def graph_compiler_node(state: AgentState) -> Dict[str, Any]:
     initial_dynamic_state = {
         "results": {},
         "depth": state.get("depth", 0),
-        "subject": state.get("subject", "")
+        "subject": state.get("subject", ""),
+        "metadata": {}
     } 
     
     final_dynamic_state = await app.ainvoke(initial_dynamic_state)
     
     print("✅ Dynamic Graph Execution Complete.")
     
-    return {"results": final_dynamic_state.get("results", {})}
+    # --- BLUEPRINT GENERATION ---
+    try:
+        run_id = str(uuid.uuid4())
+        execution_metadata = final_dynamic_state.get("metadata", {})
+        
+        agent_infos = []
+        execution_flow = [] # Simple approximation
+        
+        for node in nodes:
+            nid = node["id"]
+            if nid in execution_metadata:
+                meta = execution_metadata[nid]
+                agent_infos.append(AgentInfo(
+                    id=nid,
+                    role=meta.get("agent_role", "unknown"),
+                    system_prompt=meta.get("system_prompt", ""),
+                    instruction=node["instruction"],
+                    tools=meta.get("tools", []) # Generic worker needs to pass this if we want it
+                ))
+            execution_flow.append(nid) # Simplified execution flow (topological-ish)
+
+        blueprint = AppBlueprint(
+            run_id=run_id,
+            task=task,
+            agents=agent_infos,
+            edges=blueprint_edges,
+            execution_flow=execution_flow,
+            timestamp=datetime.now().isoformat()
+        )
+        
+        # Save Blueprint
+        blueprint_dir = os.path.join(os.getcwd(), "blueprints")
+        os.makedirs(blueprint_dir, exist_ok=True)
+        blueprint_path = os.path.join(blueprint_dir, f"{run_id}.json")
+        
+        with open(blueprint_path, "w") as f:
+            f.write(blueprint.model_dump_json(indent=2))
+            
+        print(f"📐 Saved App Blueprint to: {blueprint_path}")
+        
+    except Exception as e:
+        print(f"❌ Error generating blueprint: {e}")
+        run_id = None
+    
+    return {"results": final_dynamic_state.get("results", {}), "blueprint_id": run_id}

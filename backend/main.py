@@ -116,8 +116,13 @@ async def run_orchestrator(request: OrchestratorRequest):
                     if results:
                          yield f"data: {json.dumps({'type': 'result', 'results': results})}\n\n"
                     
+                    blueprint_id = final_output.get("blueprint_id")
+                    if blueprint_id:
+                        yield f"data: {json.dumps({'type': 'blueprint', 'id': blueprint_id})}\n\n"
+
                     if synthesis:
                          yield f"data: {json.dumps({'type': 'synthesis', 'markdown': synthesis})}\n\n"
+
 
         except asyncio.CancelledError:
             print(f"🚫 Task {req_id} was cancelled.")
@@ -148,4 +153,18 @@ async def cancel_orchestrator(request_id: str):
         task.cancel()
         return {"status": "cancelled", "message": f"Task {request_id} has been requested to cancel."}
     
-    raise HTTPException(status_code=404, detail=f"Task {request_id} not found or not running.")
+    return {"status": "not_found", "message": f"Task {request_id} not found."}
+
+@app.get("/api/run/{run_id}/blueprint")
+async def get_blueprint(run_id: str):
+    """
+    Retrieve the blueprint for a specific run.
+    """
+    try:
+        blueprint_path = f"blueprints/{run_id}.json"
+        with open(blueprint_path, "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {"error": "Blueprint not found for this run ID"}
+    except Exception as e:
+        return {"error": f"Error retrieving blueprint: {str(e)}"}

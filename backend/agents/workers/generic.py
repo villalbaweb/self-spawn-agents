@@ -127,9 +127,23 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str) ->
                     print("🔄 Depth limit hit. Completing task directly without delegation...")
                     # Re-invoke LLM without tools to force direct completion
                     direct_response = await llm.ainvoke(messages)
-                    return {"output": f"[Completed directly due to depth limit]\n{direct_response.content}"}
+                    return {
+                        "output": f"[Completed directly due to depth limit]\n{direct_response.content}",
+                        "metadata": {
+                            "system_prompt": sys_prompt,
+                            "agent_role": agent_type,
+                            "instruction": instruction
+                        }
+                    }
                 
-                return {"output": f"Recursion Result:\n{tool_output}"}
+                return {
+                    "output": f"Recursion Result:\n{tool_output}",
+                    "metadata": {
+                        "system_prompt": sys_prompt,
+                        "agent_role": agent_type,
+                        "instruction": instruction
+                    }
+                }
                 
             elif tool_call["name"] == "web_search":
                 tool_args = tool_call["args"]
@@ -154,13 +168,41 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str) ->
                         # Append refined results
                         tool_output += f"\n\n[REFINED SEARCH for: {missing_terms}]\n{refined_output}"
                 
-                return {"output": f"Search Results:\n{tool_output}"}
+                return {
+                    "output": f"Search Results:\n{tool_output}",
+                    "metadata": {
+                        "system_prompt": sys_prompt,
+                        "agent_role": agent_type,
+                        "instruction": instruction
+                    }
+                }
             
             elif tool_call["name"] == "python_repl":
                 tool_args = tool_call["args"]
                 tool_output = await python_repl.ainvoke(tool_args)
-                return {"output": f"Python Execution:\n{tool_output}"}
+                return {
+                    "output": f"Python Execution:\n{tool_output}",
+                    "metadata": {
+                        "system_prompt": sys_prompt,
+                        "agent_role": agent_type,
+                        "instruction": instruction
+                    }
+                }
         
-        return {"output": response.content}
+        return {
+            "output": response.content,
+            "metadata": {
+                "system_prompt": sys_prompt,
+                "agent_role": agent_type,
+                "instruction": instruction
+            }
+        }
     except Exception as e:
-        return {"output": f"Error: {str(e)}"}
+        return {
+            "output": f"Error: {str(e)}",
+            "metadata": {
+                "system_prompt": "Error generating prompt",
+                "agent_role": agent_type,
+                "instruction": instruction
+            }
+        }
