@@ -87,11 +87,18 @@ async def run_orchestrator(request: OrchestratorRequest):
             }
             
             # Use astream_events to track node transitions
+            latest_state = initial_state
             async for event in app_graph.astream_events(initial_state, version="v2"):
                 kind = event.get("event")
                 name = event.get("name")
                 
-                # We care about when nodes start
+                # Update latest_state on every end event that carries state
+                if kind in ["on_chain_end", "on_node_end"]:
+                    output = event.get("data", {}).get("output")
+                    if output and isinstance(output, dict):
+                        latest_state.update(output)
+
+                # We care about when nodes start for progress logs
                 if kind == "on_chain_start" and name in ["semantic_splitter", "supervisor", "graph_compiler", "synthesizer"]:
                     display_names = {
                         "semantic_splitter": "Decomposing task into subtasks...",
@@ -102,39 +109,35 @@ async def run_orchestrator(request: OrchestratorRequest):
                     msg = display_names.get(name, f"Executing {name}...")
                     yield f"data: {json.dumps({'type': 'progress', 'message': msg})}\n\n"
 
-                # Yield final results (Root chain end)
-                elif kind == "on_chain_end" and not event.get("parent_ids"):
-                    print(f"🏁 Root chain finished. Captured output keys: {list(event.get('data', {}).get('output', {}).keys())}")
-                    final_output = event.get("data", {}).get("output", {})
-                    subtasks = final_output.get("subtasks", [])
-                    graph_plan = final_output.get("graph_plan", {})
-                    results = final_output.get("results", {})
-                    synthesis = final_output.get("synthesis", "")
-                    
-                    if subtasks:
-                         yield f"data: {json.dumps({'type': 'result', 'subtasks': subtasks})}\n\n"
-                    
-                    if graph_plan:
-                         yield f"data: {json.dumps({'type': 'result', 'graph_plan': graph_plan})}\n\n"
+            # --- STREAM ENDED ---
+            # Emit final results from the total accumulated state
+            print(f"🏁 Stream ended. Captured state keys: {list(latest_state.keys())}")
+            
+            subtasks = latest_state.get("subtasks", [])
+            graph_plan = latest_state.get("graph_plan", {})
+            results = latest_state.get("results", {})
+            synthesis = latest_state.get("synthesis", "")
+            all_agents = latest_state.get("all_agents", [])
+            all_edges = latest_state.get("all_edges", [])
+            
+            if subtasks:
+                yield f"data: {json.dumps({'type': 'result', 'subtasks': subtasks})}\n\n"
+            if graph_plan:
+                yield f"data: {json.dumps({'type': 'result', 'graph_plan': graph_plan})}\n\n"
+            if results:
+                yield f"data: {json.dumps({'type': 'result', 'results': results})}\n\n"
+            
+            blueprint_id = latest_state.get("blueprint_id")
+            if blueprint_id:
+                yield f"data: {json.dumps({'type': 'blueprint', 'id': blueprint_id})}\n\n"
 
-                    if results:
-                         yield f"data: {json.dumps({'type': 'result', 'results': results})}\n\n"
-                    
-                    blueprint_id = final_output.get("blueprint_id")
-                    if blueprint_id:
-                        yield f"data: {json.dumps({'type': 'blueprint', 'id': blueprint_id})}\n\n"
+            if all_agents:
+                print(f"📡 Emitting unified_graph: {len(all_agents)} agents")
+                yield f"data: {json.dumps({'type': 'unified_graph', 'agents': all_agents, 'edges': all_edges})}\n\n"
 
-                    # Emit unified graph data for visualization
-                    all_agents = final_output.get("all_agents", [])
-                    all_edges = final_output.get("all_edges", [])
-                    if all_agents:
-                        print(f"📡 Emitting unified_graph: {len(all_agents)} agents")
-                        yield f"data: {json.dumps({'type': 'unified_graph', 'agents': all_agents, 'edges': all_edges})}\n\n"
-
-                    if synthesis:
-                         print(f"📡 Emitting synthesis report ({len(synthesis)} chars)")
-                         yield f"data: {json.dumps({'type': 'synthesis', 'markdown': synthesis})}\n\n"
-
+            if synthesis:
+                print(f"📡 Emitting synthesis report ({len(synthesis)} chars)")
+                yield f"data: {json.dumps({'type': 'synthesis', 'markdown': synthesis})}\n\n"
 
         except asyncio.CancelledError:
             print(f"🚫 Task {req_id} was cancelled.")
