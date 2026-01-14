@@ -3,6 +3,9 @@ from typing import TypedDict, List, Dict, Any, Annotated
 def replace(a: Any, b: Any) -> Any:
     return b
 
+def merge_lists(a: List, b: List) -> List:
+    return a + b
+
 class AgentState(TypedDict):
     task: str # High-level user prompt
     subject: str # Primary subject/product extracted from task (for drift prevention)
@@ -12,3 +15,6 @@ class AgentState(TypedDict):
     results: Dict[str, str] # Results from executed nodes
     depth: Annotated[int, replace] # Current recursion depth (starts at 0)
     blueprint_id: str # ID of the generated blueprint, if any
+    # Aggregated data for unified graph rendering
+    all_agents: Annotated[List[Dict], merge_lists] # All agents across all subgraphs
+    all_edges: Annotated[List[Dict], merge_lists] # All edges across all subgraphs

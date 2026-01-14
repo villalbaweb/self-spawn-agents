@@ -136,34 +136,42 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
     
     print("✅ Dynamic Graph Execution Complete.")
     
-    # --- BLUEPRINT GENERATION ---
+    # --- AGGREGATE AGENTS AND EDGES FOR UNIFIED GRAPH ---
+    current_depth = state.get("depth", 0)
+    execution_metadata = final_dynamic_state.get("metadata", {})
+    
+    # Build agent info dicts (not Pydantic models, for state merging)
+    new_agents = []
+    for node in nodes:
+        nid = node["id"]
+        if nid in execution_metadata:
+            meta = execution_metadata[nid]
+            new_agents.append({
+                "id": nid,
+                "role": meta.get("agent_role", node["agent_type"]),
+                "system_prompt": meta.get("system_prompt", ""),
+                "instruction": node["instruction"],
+                "tools": meta.get("tools", []),
+                "depth": current_depth
+            })
+    
+    # Build edge dicts
+    new_edges = [{"source": e.source, "target": e.target, "depth": current_depth} for e in blueprint_edges]
+    
+    # --- BLUEPRINT GENERATION (for backwards compatibility/debugging) ---
     try:
         run_id = str(uuid.uuid4())
-        execution_metadata = final_dynamic_state.get("metadata", {})
         
-        agent_infos = []
-        execution_flow = [] # Simple approximation
+        agent_infos = [AgentInfo(**a) for a in new_agents]
         
-        for node in nodes:
-            nid = node["id"]
-            if nid in execution_metadata:
-                meta = execution_metadata[nid]
-                agent_infos.append(AgentInfo(
-                    id=nid,
-                    role=meta.get("agent_role", "unknown"),
-                    system_prompt=meta.get("system_prompt", ""),
-                    instruction=node["instruction"],
-                    tools=meta.get("tools", []) # Generic worker needs to pass this if we want it
-                ))
-            execution_flow.append(nid) # Simplified execution flow (topological-ish)
-
         blueprint = AppBlueprint(
             run_id=run_id,
             task=task,
             agents=agent_infos,
             edges=blueprint_edges,
-            execution_flow=execution_flow,
-            timestamp=datetime.now().isoformat()
+            execution_flow=[n["id"] for n in nodes],
+            timestamp=datetime.now().isoformat(),
+            depth=current_depth
         )
         
         # Save Blueprint
@@ -180,4 +188,9 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
         print(f"❌ Error generating blueprint: {e}")
         run_id = None
     
-    return {"results": final_dynamic_state.get("results", {}), "blueprint_id": run_id}
+    return {
+        "results": final_dynamic_state.get("results", {}), 
+        "blueprint_id": run_id,
+        "all_agents": new_agents,
+        "all_edges": new_edges
+    }

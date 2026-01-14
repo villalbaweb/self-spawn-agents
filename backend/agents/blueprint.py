@@ -19,3 +19,4 @@ class AppBlueprint(BaseModel):
     edges: List[EdgeInfo] = Field(default_factory=list, description="Graph connections")
     execution_flow: List[str] = Field(default_factory=list, description="Execution order")
     timestamp: str = Field(..., description="Creation timestamp")
+    depth: int = Field(default=0, description="Recursion depth of this graph")

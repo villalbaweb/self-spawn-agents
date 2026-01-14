@@ -123,6 +123,12 @@ async def run_orchestrator(request: OrchestratorRequest):
                     if blueprint_id:
                         yield f"data: {json.dumps({'type': 'blueprint', 'id': blueprint_id})}\n\n"
 
+                    # Emit unified graph data for visualization
+                    all_agents = final_output.get("all_agents", [])
+                    all_edges = final_output.get("all_edges", [])
+                    if all_agents:
+                        yield f"data: {json.dumps({'type': 'unified_graph', 'agents': all_agents, 'edges': all_edges})}\n\n"
+
                     if synthesis:
                          yield f"data: {json.dumps({'type': 'synthesis', 'markdown': synthesis})}\n\n"
 
