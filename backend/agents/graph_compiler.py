@@ -114,19 +114,11 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 sub_edges = final_sub_state.get("all_edges", [])
                 synthesis = final_sub_state.get("synthesis", "")
                 
-                # Create parent node entry for visualization
-                parent_agent = {
-                    "id": _id,
-                    "role": "SubOrchestrator",
-                    "system_prompt": f"Recursive orchestration for: {_instr[:200]}",
-                    "instruction": _instr,
-                    "output": result_summary,
-                    "tools": [],
-                    "depth": current_depth
-                }
+                # Combine sub-results into a summary
+                result_summary = synthesis if synthesis else str(sub_results)
                 
                 # Create edges from this parent to root nodes of sub-orchestration
-                # (Root nodes are those at depth = current_depth + 1 with no incoming edges from same depth)
+                # (Root nodes are those at depth = current_depth + 1)
                 hierarchy_edges = []
                 sub_depth = current_depth + 1
                 root_sub_agents = [a for a in sub_agents if a.get("depth") == sub_depth]
@@ -137,9 +129,17 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                         "depth": current_depth,
                         "type": "hierarchy"  # Mark as hierarchy edge for visualization
                     })
-                
-                # Combine sub-results into a summary
-                result_summary = synthesis if synthesis else str(sub_results)
+
+                # Create parent node entry for visualization
+                parent_agent = {
+                    "id": _id,
+                    "role": "SubOrchestrator",
+                    "system_prompt": f"Recursive orchestration for: {_instr[:200]}",
+                    "instruction": _instr,
+                    "output": result_summary,
+                    "tools": [],
+                    "depth": current_depth
+                }
                 
                 print(f"✅ [RecursiveNode] Sub-orchestration complete. {len(sub_agents)} agents, {len(sub_edges) + len(hierarchy_edges)} edges (incl. {len(hierarchy_edges)} hierarchy).")
                 

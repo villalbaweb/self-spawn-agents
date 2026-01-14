@@ -57,11 +57,19 @@ Research Results:
     try:
         response = await llm.ainvoke(messages)
         
-        # Check for missing deliverables in the output
+        # Check for missing deliverables in the output (Fuzzy keyword check)
         output = response.content
         missing = []
         for d in deliverables:
-            if d.lower() not in output.lower():
+            # Extract keywords (words > 3 chars)
+            keywords = [word.lower() for word in d.split() if len(word) > 3]
+            # If at least 50% of keywords are missing, consider it missing
+            if keywords:
+                found_count = sum(1 for k in keywords if k in output.lower())
+                if found_count / len(keywords) < 0.5:
+                    missing.append(d)
+            elif d.lower() not in output.lower():
+                # Fallback for very short deliverable strings
                 missing.append(d)
         
         if missing:
