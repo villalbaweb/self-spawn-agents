@@ -21,6 +21,9 @@ interface AgentInfo {
   status?: string;
   error_message?: string;
   tools_available?: string[];
+  // Confidence (HITL)
+  confidence_score?: number;
+  confidence_reasoning?: string;
 }
 
 interface EdgeInfo {
@@ -324,6 +327,23 @@ function App() {
               {selectedAgent.error_message && (
                 <div className="error-box">
                   ⚠️ {selectedAgent.error_message}
+                </div>
+              )}
+
+              {/* Confidence Display */}
+              {selectedAgent.confidence_score !== undefined && (
+                <div className="field-group">
+                  <label>Confidence</label>
+                  <div className="confidence-meter">
+                    <div
+                      className={`confidence-bar ${selectedAgent.confidence_score >= 0.7 ? 'high' : selectedAgent.confidence_score >= 0.4 ? 'medium' : 'low'}`}
+                      style={{ width: `${(selectedAgent.confidence_score * 100).toFixed(0)}%` }}
+                    />
+                    <span className="confidence-value">{(selectedAgent.confidence_score * 100).toFixed(0)}%</span>
+                  </div>
+                  {selectedAgent.confidence_reasoning && (
+                    <div className="confidence-reasoning">{selectedAgent.confidence_reasoning}</div>
+                  )}
                 </div>
               )}
 

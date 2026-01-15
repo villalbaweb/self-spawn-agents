@@ -438,3 +438,49 @@ body {
   font-size: 13px;
   line-height: 1.5;
 }
+
+/* Confidence Meter */
+.confidence-meter {
+  position: relative;
+  height: 24px;
+  background: #1e272e;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.confidence-bar {
+  height: 100%;
+  border-radius: 6px;
+  transition: width 0.4s ease-out;
+}
+
+.confidence-bar.high {
+  background: linear-gradient(90deg, #05c46b, #0be881);
+}
+
+.confidence-bar.medium {
+  background: linear-gradient(90deg, #f39c12, #ffc312);
+}
+
+.confidence-bar.low {
+  background: linear-gradient(90deg, #e74c3c, #ff6b6b);
+}
+
+.confidence-value {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.confidence-reasoning {
+  font-size: 11px;
+  color: #a4b0be;
+  margin-top: 6px;
+  font-style: italic;
+}

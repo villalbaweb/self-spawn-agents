@@ -18,3 +18,7 @@ class AgentState(TypedDict):
     # Aggregated data for unified graph rendering
     all_agents: Annotated[List[Dict], merge_lists] # All agents across all subgraphs
     all_edges: Annotated[List[Dict], merge_lists] # All edges across all subgraphs
+    # Synthesis and HITL
+    synthesis: str # Final synthesized report markdown
+    confidence_score: float # Aggregate confidence score (0.0 - 1.0)
+    review_required: bool # If True, HITL pause is triggered before synthesis

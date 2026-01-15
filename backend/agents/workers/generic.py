@@ -3,6 +3,56 @@ from agents.dependencies import llm, llm_mini
 from langchain_core.runnables import RunnableConfig
 import re
 import time
+import json
+
+async def evaluate_confidence(instruction: str, output: str, config: RunnableConfig = None) -> dict:
+    """
+    Uses the LLM to evaluate the quality and confidence of an agent's output.
+    Returns a dict with 'confidence_score' (0.0-1.0) and 'confidence_reasoning'.
+    """
+    evaluation_prompt = f"""Evaluate how well the following output addresses the given instruction.
+    
+<instruction>
+{instruction}
+</instruction>
+
+<output>
+{output[:2000]}  # Truncated for evaluation
+</output>
+
+Rate the output on a scale of 0.0 to 1.0 based on:
+- Completeness: Does it fully address all parts of the instruction?
+- Accuracy: Is the information reliable and not vague?
+- Relevance: Is the content directly related to the instruction?
+
+Respond with ONLY a JSON object, no other text:
+{{"confidence_score": 0.X, "reasoning": "Brief explanation"}}
+"""
+    try:
+        messages = [
+            SystemMessage(content="You are a quality evaluator. Output ONLY valid JSON."),
+            HumanMessage(content=evaluation_prompt)
+        ]
+        if config:
+            response = await llm_mini.ainvoke(messages, config=config)
+        else:
+            response = await llm_mini.ainvoke(messages)
+        
+        # Parse JSON from response
+        content = response.content.strip()
+        # Handle potential markdown code blocks
+        if "```" in content:
+            content = re.search(r'```(?:json)?\s*(.*?)\s*```', content, re.DOTALL)
+            content = content.group(1) if content else "{}"
+        
+        result = json.loads(content)
+        return {
+            "confidence_score": float(result.get("confidence_score", 0.5)),
+            "confidence_reasoning": result.get("reasoning", "Unable to evaluate")
+        }
+    except Exception as e:
+        print(f"⚠️ Confidence evaluation failed: {e}")
+        return {"confidence_score": 0.5, "confidence_reasoning": f"Evaluation error: {str(e)}"}
 
 async def generate_dynamic_system_prompt(instruction: str, agent_type: str, config: RunnableConfig = None) -> str:
     """
@@ -150,8 +200,13 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
                         tool_output += f"\n\n[REFINED SEARCH for: {missing_terms}]\n{refined_output}"
                 
                 execution_time = time.time() - start_time
+                final_output = f"Search Results:\n{tool_output}"
+                
+                # Evaluate confidence for this result
+                confidence_eval = await evaluate_confidence(instruction, final_output, config)
+                
                 return {
-                    "output": f"Search Results:\n{tool_output}",
+                    "output": final_output,
                     "metadata": {
                         "system_prompt": sys_prompt,
                         "agent_role": agent_type,
@@ -160,7 +215,9 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
                         "execution_time_seconds": round(execution_time, 2),
                         "depth": current_depth,
                         "status": "completed",
-                        "tools_available": ["web_search"]
+                        "tools_available": ["web_search"],
+                        "confidence_score": confidence_eval["confidence_score"],
+                        "confidence_reasoning": confidence_eval["confidence_reasoning"]
                     }
                 }
             
@@ -172,8 +229,13 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
                     tool_output = await python_repl.ainvoke(tool_args)
 
                 execution_time = time.time() - start_time
+                final_output = f"Python Execution:\n{tool_output}"
+                
+                # Evaluate confidence for this result
+                confidence_eval = await evaluate_confidence(instruction, final_output, config)
+                
                 return {
-                    "output": f"Python Execution:\n{tool_output}",
+                    "output": final_output,
                     "metadata": {
                         "system_prompt": sys_prompt,
                         "agent_role": agent_type,
@@ -182,7 +244,9 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
                         "execution_time_seconds": round(execution_time, 2),
                         "depth": current_depth,
                         "status": "completed",
-                        "tools_available": ["python_repl"]
+                        "tools_available": ["python_repl"],
+                        "confidence_score": confidence_eval["confidence_score"],
+                        "confidence_reasoning": confidence_eval["confidence_reasoning"]
                     }
                 }
         
@@ -193,9 +257,14 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
             tools_available = ["web_search"]
         elif agent_type.lower() == "coder":
             tools_available = ["python_repl"]
+        
+        final_output = response.content
+        
+        # Evaluate confidence for this result
+        confidence_eval = await evaluate_confidence(instruction, final_output, config)
             
         return {
-            "output": response.content,
+            "output": final_output,
             "metadata": {
                 "system_prompt": sys_prompt,
                 "agent_role": agent_type,
@@ -204,7 +273,9 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
                 "execution_time_seconds": round(execution_time, 2),
                 "depth": current_depth,
                 "status": "completed",
-                "tools_available": tools_available
+                "tools_available": tools_available,
+                "confidence_score": confidence_eval["confidence_score"],
+                "confidence_reasoning": confidence_eval["confidence_reasoning"]
             }
         }
     except Exception as e:
@@ -220,6 +291,8 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
                 "depth": current_depth if 'current_depth' in locals() else 0,
                 "status": "error",
                 "error_message": str(e),
-                "tools_available": []
+                "tools_available": [],
+                "confidence_score": 0.0,
+                "confidence_reasoning": f"Error during execution: {str(e)}"
             }
         }

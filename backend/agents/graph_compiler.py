@@ -268,7 +268,7 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 "depth": current_depth
             }
             # Spread standard metadata keys if they exist
-            for key in ["status", "execution_time_seconds", "tool_used", "tools_available", "error_message"]:
+            for key in ["status", "execution_time_seconds", "tool_used", "tools_available", "error_message", "confidence_score", "confidence_reasoning"]:
                 if key in meta:
                     agent_data[key] = meta[key]
             
