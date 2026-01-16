@@ -1,58 +1,12 @@
 from langchain_core.messages import SystemMessage, HumanMessage
 from agents.dependencies import llm, llm_mini
+from agents.evaluate_confidence import evaluate_confidence
 from langchain_core.runnables import RunnableConfig
 import re
 import time
 import json
 
-async def evaluate_confidence(instruction: str, output: str, config: RunnableConfig = None) -> dict:
-    """
-    Uses the LLM to evaluate the quality and confidence of an agent's output.
-    Returns a dict with 'confidence_score' (0.0-1.0) and 'confidence_reasoning'.
-    """
-    evaluation_prompt = f"""Evaluate how well the following output addresses the given instruction.
-    
-<instruction>
-{instruction}
-</instruction>
 
-<output>
-{output[:2000]}  # Truncated for evaluation
-</output>
-
-Rate the output on a scale of 0.0 to 1.0 based on:
-- Completeness: Does it fully address all parts of the instruction?
-- Accuracy: Is the information reliable and not vague?
-- Relevance: Is the content directly related to the instruction?
-
-Respond with ONLY a JSON object, no other text:
-{{"confidence_score": 0.X, "reasoning": "Brief explanation"}}
-"""
-    try:
-        messages = [
-            SystemMessage(content="You are a quality evaluator. Output ONLY valid JSON."),
-            HumanMessage(content=evaluation_prompt)
-        ]
-        if config:
-            response = await llm_mini.ainvoke(messages, config=config)
-        else:
-            response = await llm_mini.ainvoke(messages)
-        
-        # Parse JSON from response
-        content = response.content.strip()
-        # Handle potential markdown code blocks
-        if "```" in content:
-            content = re.search(r'```(?:json)?\s*(.*?)\s*```', content, re.DOTALL)
-            content = content.group(1) if content else "{}"
-        
-        result = json.loads(content)
-        return {
-            "confidence_score": float(result.get("confidence_score", 0.5)),
-            "confidence_reasoning": result.get("reasoning", "Unable to evaluate")
-        }
-    except Exception as e:
-        print(f"⚠️ Confidence evaluation failed: {e}")
-        return {"confidence_score": 0.5, "confidence_reasoning": f"Evaluation error: {str(e)}"}
 
 async def generate_dynamic_system_prompt(instruction: str, agent_type: str, config: RunnableConfig = None) -> str:
     """
