@@ -5,6 +5,17 @@ from langchain_core.runnables import RunnableConfig
 import re
 import time
 import json
+import os
+
+# --- CONFIGURABLE HITL THRESHOLDS ---
+# Set these environment variables to test HITL behavior:
+# HITL_TIER1_THRESHOLD=0.5 (default) - Below this triggers self-correction
+# HITL_TIER2_THRESHOLD=0.5 (default) - Below this sets low_confidence_flag
+# HITL_TIER3_THRESHOLD=0.3 (default) - Below this triggers Hard Stop interrupt
+# For testing, set HITL_TIER3_THRESHOLD=0.99 to force interrupts on every node.
+TIER1_THRESHOLD = float(os.getenv("HITL_TIER1_THRESHOLD", "0.5"))
+TIER2_THRESHOLD = float(os.getenv("HITL_TIER2_THRESHOLD", "0.5"))
+TIER3_THRESHOLD = float(os.getenv("HITL_TIER3_THRESHOLD", "0.3"))
 
 
 
@@ -189,8 +200,8 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
         confidence_score = confidence_eval["confidence_score"]
         confidence_reasoning = confidence_eval["confidence_reasoning"]
         
-        if confidence_score < 0.5:
-             # Trigger self-correction
+        if confidence_score < TIER1_THRESHOLD:
+             # Trigger self-correction (Tier 1)
              correction_result = await simple_self_correct(instruction, final_output, confidence_reasoning, agent_type, config)
              final_output = correction_result["output"]
              
@@ -200,8 +211,8 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
              confidence_reasoning = f"[Self-Corrected] {confidence_eval['confidence_reasoning']}"
 
         # --- TIER 3: HARD STOP (HITL) ---
-        if confidence_score < 0.3:
-            print(f"🛑 [HITL] Tier 3 Hard Stop triggered (Confidence: {confidence_score:.2f})")
+        if confidence_score < TIER3_THRESHOLD:
+            print(f"🛑 [HITL] Tier 3 Hard Stop triggered (Confidence: {confidence_score:.2f}, Threshold: {TIER3_THRESHOLD})")
             
             interrupt_payload = {
                 "type": "tier3_interrupt",
@@ -209,7 +220,7 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
                 "confidence_score": confidence_score,
                 "current_output": final_output,
                 "reasoning": confidence_reasoning,
-                "message": f"Critical failure in {agent_type}: Confidence {confidence_score:.2f} is below safety threshold (0.3)."
+                "message": f"Critical failure in {agent_type}: Confidence {confidence_score:.2f} is below safety threshold ({TIER3_THRESHOLD})."
             }
             
             # ⏸️ PAUSE EXECUTION HERE ⏸️
@@ -228,7 +239,7 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
                 # Scenario B: User said "proceed" (resume_value might be simple action flag) - we keep original output
                 
         # --- TIER 2: SOFT FLAG ---
-        low_confidence_flag = confidence_score < 0.5
+        low_confidence_flag = confidence_score < TIER2_THRESHOLD
 
         return {
             "output": final_output,
@@ -247,7 +258,12 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
             }
         }
 
-    except Exception as e:
+    except (Exception) as e:
+        # Check if it's any kind of LangGraph interrupt (which shouldn't be caught)
+        from langgraph.errors import GraphBubbleUp
+        if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__:
+            raise e
+            
         execution_time = time.time() - start_time if 'start_time' in locals() else 0
         return {
             "output": f"Error: {str(e)}",

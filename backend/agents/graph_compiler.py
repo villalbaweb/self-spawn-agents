@@ -225,8 +225,10 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
         if node["id"] not in parent_ids:
             workflow.add_edge(node["id"], END)
             
-    # Compile
-    app = workflow.compile()
+    # Compile with checkpointer for HITL interrupt support
+    from langgraph.checkpoint.memory import MemorySaver
+    inner_checkpointer = MemorySaver()
+    app = workflow.compile(checkpointer=inner_checkpointer)
     
     # Execute
     print("▶️ Executing Dynamic Graph...")
@@ -239,11 +241,41 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
         "all_edges": []
     } 
     
-    # Pass config to inner graph execution
-    if config:
-        final_dynamic_state = await app.ainvoke(initial_dynamic_state, config=config)
-    else:
-        final_dynamic_state = await app.ainvoke(initial_dynamic_state)
+    # Create a unique thread_id for the inner graph's checkpointer
+    import uuid
+    inner_thread_id = str(uuid.uuid4())
+    inner_config = {"configurable": {"thread_id": inner_thread_id}}
+    
+    # Execute - pass inner config for checkpointer
+    try:
+        final_dynamic_state = await app.ainvoke(initial_dynamic_state, config=inner_config)
+    except Exception as e:
+        # Check if it's any kind of LangGraph interrupt (which should be bubbled up)
+        from langgraph.errors import GraphBubbleUp
+        if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__:
+            print(f"⏸️ Inner graph raised Interrupt exception. Re-raising to bubble up...")
+            raise
+        else:
+            # Other exceptions
+            print(f"❌ Inner graph failed: {e}")
+            raise e
+    
+    # CRITICAL: With checkpointers, ainvoke() does NOT raise on interrupt!
+    # It returns normally but sets state.next. We must check this explicitly.
+    inner_state = await app.aget_state(inner_config)
+    if inner_state.next:
+        print(f"⏸️ Inner graph paused at: {inner_state.next}. Bubbling up interrupt...")
+        from langgraph.types import interrupt
+        # Get the interrupt value from the inner graph's state
+        interrupt_values = inner_state.tasks
+        interrupt_data = {
+            "type": "inner_graph_interrupt",
+            "paused_at": list(inner_state.next),
+            "message": "An agent in the execution graph requires human review.",
+            "inner_interrupts": [t.interrupts for t in interrupt_values if t.interrupts] if interrupt_values else []
+        }
+        # This will pause the outer graph_compiler_node
+        interrupt(interrupt_data)
     
     print("✅ Dynamic Graph Execution Complete.")
     
