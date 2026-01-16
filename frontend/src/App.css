@@ -484,3 +484,104 @@ body {
   margin-top: 6px;
   font-style: italic;
 }
+
+/* HITL Interrupt Overlay */
+.hitl-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.3s ease;
+}
+
+.hitl-banner {
+  background: #1e272e;
+  border: 1px solid #f39c12;
+  border-radius: 12px;
+  width: 500px;
+  padding: 24px;
+  display: flex;
+  gap: 20px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  animation: slideUp 0.3s ease;
+}
+
+.hitl-icon {
+  font-size: 32px;
+}
+
+.hitl-text h3 {
+  color: #f39c12;
+  margin: 0 0 8px 0;
+}
+
+.hitl-text p {
+  color: #d2dae2;
+  font-size: 14px;
+  margin: 0;
+}
+
+.hitl-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.hitl-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: none;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.hitl-btn.proceed {
+  background: #f39c12;
+  color: #1e272e;
+}
+
+.hitl-btn.proceed:hover {
+  background: #ffab2e;
+}
+
+.hitl-btn.close {
+  background: transparent;
+  border: 1px solid #3d4e5f;
+  color: #a4b0be;
+}
+
+.hitl-btn.refine:hover {
+  background: #2980b9;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}

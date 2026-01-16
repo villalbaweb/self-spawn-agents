@@ -111,11 +111,17 @@ async def generate_dynamic_system_prompt(instruction: str, agent_type: str, conf
 
 from agents.tools.web_search import web_search
 from agents.tools.python_repl import python_repl
+from agents.self_correct import simple_self_correct
+from langgraph.types import interrupt
 
 async def generic_worker_node(state: dict, instruction: str, agent_type: str, config: RunnableConfig = None) -> dict:
     """
     A generic worker that uses the LLM to perform a task.
     Supports tool calling for recursive subgraphs.
+    Includes 3-Tier Escalation Protocol:
+    - Tier 1: Autonomous Self-Correction (Retry).
+    - Tier 2: Soft Flag (Metadata).
+    - Tier 3: Hard Stop (Interrupt).
     """
     print(f"🤖 {agent_type} working on: {instruction}")
     
@@ -167,12 +173,16 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
         else:
             response = await llm_with_tools.ainvoke(messages)
         
+        final_output = ""
+        tools_available = []
+        
         # Check for tool calls
         if response.tool_calls:
             tool_call = response.tool_calls[0]
             tool_name = tool_call["name"]
             print(f"🛠️ Tool Call Detected: {tool_name}")
             tool_used = tool_name
+            tools_available = [tool_name]
             
             if tool_name == "web_search":
                 tool_args = tool_call["args"]
@@ -199,27 +209,7 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
                         
                         tool_output += f"\n\n[REFINED SEARCH for: {missing_terms}]\n{refined_output}"
                 
-                execution_time = time.time() - start_time
                 final_output = f"Search Results:\n{tool_output}"
-                
-                # Evaluate confidence for this result
-                confidence_eval = await evaluate_confidence(instruction, final_output, config)
-                
-                return {
-                    "output": final_output,
-                    "metadata": {
-                        "system_prompt": sys_prompt,
-                        "agent_role": agent_type,
-                        "instruction": instruction,
-                        "tool_used": tool_used,
-                        "execution_time_seconds": round(execution_time, 2),
-                        "depth": current_depth,
-                        "status": "completed",
-                        "tools_available": ["web_search"],
-                        "confidence_score": confidence_eval["confidence_score"],
-                        "confidence_reasoning": confidence_eval["confidence_reasoning"]
-                    }
-                }
             
             elif tool_name == "python_repl":
                 tool_args = tool_call["args"]
@@ -228,56 +218,81 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
                 else:
                     tool_output = await python_repl.ainvoke(tool_args)
 
-                execution_time = time.time() - start_time
                 final_output = f"Python Execution:\n{tool_output}"
-                
-                # Evaluate confidence for this result
-                confidence_eval = await evaluate_confidence(instruction, final_output, config)
-                
-                return {
-                    "output": final_output,
-                    "metadata": {
-                        "system_prompt": sys_prompt,
-                        "agent_role": agent_type,
-                        "instruction": instruction,
-                        "tool_used": "python_repl",
-                        "execution_time_seconds": round(execution_time, 2),
-                        "depth": current_depth,
-                        "status": "completed",
-                        "tools_available": ["python_repl"],
-                        "confidence_score": confidence_eval["confidence_score"],
-                        "confidence_reasoning": confidence_eval["confidence_reasoning"]
-                    }
-                }
-        
-        # No tool call - direct LLM response
+
+        else:
+            # No tool call - direct LLM response
+            if agent_type.lower() == "researcher":
+                tools_available = ["web_search"]
+            elif agent_type.lower() == "coder":
+                tools_available = ["python_repl"]
+            final_output = response.content
+
         execution_time = time.time() - start_time
-        tools_available = []
-        if agent_type.lower() == "researcher":
-            tools_available = ["web_search"]
-        elif agent_type.lower() == "coder":
-            tools_available = ["python_repl"]
         
-        final_output = response.content
-        
-        # Evaluate confidence for this result
+        # --- TIER 1: CONFIDENCE CHECK & SELF-CORRECTION ---
         confidence_eval = await evaluate_confidence(instruction, final_output, config)
+        confidence_score = confidence_eval["confidence_score"]
+        confidence_reasoning = confidence_eval["confidence_reasoning"]
+        
+        if confidence_score < 0.5:
+             # Trigger self-correction
+             correction_result = await simple_self_correct(instruction, final_output, confidence_reasoning, agent_type, config)
+             final_output = correction_result["output"]
+             
+             # Re-evaluate confidence
+             confidence_eval = await evaluate_confidence(instruction, final_output, config)
+             confidence_score = confidence_eval["confidence_score"]
+             confidence_reasoning = f"[Self-Corrected] {confidence_eval['confidence_reasoning']}"
+
+        # --- TIER 3: HARD STOP (HITL) ---
+        if confidence_score < 0.3:
+            print(f"🛑 [HITL] Tier 3 Hard Stop triggered (Confidence: {confidence_score:.2f})")
             
+            interrupt_payload = {
+                "type": "tier3_interrupt",
+                "agent_type": agent_type,
+                "confidence_score": confidence_score,
+                "current_output": final_output,
+                "reasoning": confidence_reasoning,
+                "message": f"Critical failure in {agent_type}: Confidence {confidence_score:.2f} is below safety threshold (0.3)."
+            }
+            
+            # ⏸️ PAUSE EXECUTION HERE ⏸️
+            # The function will suspend. When resumed, resume_value will contain the user's input.
+            resume_value = interrupt(interrupt_payload)
+            
+            print(f"✅ [HITL] Tier 3 Resumed with: {resume_value}")
+            
+            # Handle Resume Logic
+            if resume_value and isinstance(resume_value, dict):
+                # Scenario A: User provided a manual fix
+                if "output" in resume_value:
+                    final_output = resume_value["output"]
+                    confidence_score = 1.0
+                    confidence_reasoning = "Manually corrected by user."
+                # Scenario B: User said "proceed" (resume_value might be simple action flag) - we keep original output
+                
+        # --- TIER 2: SOFT FLAG ---
+        low_confidence_flag = confidence_score < 0.5
+
         return {
             "output": final_output,
             "metadata": {
                 "system_prompt": sys_prompt,
                 "agent_role": agent_type,
                 "instruction": instruction,
-                "tool_used": None,
+                "tool_used": tool_used,
                 "execution_time_seconds": round(execution_time, 2),
                 "depth": current_depth,
                 "status": "completed",
                 "tools_available": tools_available,
-                "confidence_score": confidence_eval["confidence_score"],
-                "confidence_reasoning": confidence_eval["confidence_reasoning"]
+                "confidence_score": confidence_score,
+                "confidence_reasoning": confidence_reasoning,
+                "low_confidence_flag": low_confidence_flag
             }
         }
+
     except Exception as e:
         execution_time = time.time() - start_time if 'start_time' in locals() else 0
         return {
@@ -296,3 +311,4 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
                 "confidence_reasoning": f"Error during execution: {str(e)}"
             }
         }
+

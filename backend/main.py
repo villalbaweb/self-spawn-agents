@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from agent import app_graph
 import json
 from agents.semantic_splitter import semantic_splitter_node
@@ -86,9 +86,12 @@ async def run_orchestrator(request: OrchestratorRequest):
                 "deliverables": []
             }
             
+            # Pass thread_id to support checkpointers/HITL
+            config = {"configurable": {"thread_id": req_id}}
+
             # Use astream_events to track node transitions
             latest_state = initial_state
-            async for event in app_graph.astream_events(initial_state, version="v2"):
+            async for event in app_graph.astream_events(initial_state, config=config, version="v2"):
                 kind = event.get("event")
                 name = event.get("name")
                 
@@ -99,15 +102,22 @@ async def run_orchestrator(request: OrchestratorRequest):
                         latest_state.update(output)
 
                 # We care about when nodes start for progress logs
-                if kind == "on_chain_start" and name in ["semantic_splitter", "supervisor", "graph_compiler", "synthesizer"]:
+                if kind == "on_chain_start" and name in ["semantic_splitter", "supervisor", "graph_compiler", "confidence_check", "synthesizer"]:
                     display_names = {
                         "semantic_splitter": "Decomposing task into subtasks...",
                         "supervisor": "Planning execution graph with Supervisor...",
                         "graph_compiler": "Compiling and Executing Dynamic Graph...",
+                        "confidence_check": "Evaluating results confidence...",
                         "synthesizer": "Synthesizing final report...",
                     }
                     msg = display_names.get(name, f"Executing {name}...")
                     yield f"data: {json.dumps({'type': 'progress', 'message': msg})}\n\n"
+
+            # Check if the graph is at an interrupt point
+            graph_state = await app_graph.aget_state(config)
+            if graph_state.next:
+                print(f"⏸️ Graph interrupted at: {graph_state.next}")
+                yield f"data: {json.dumps({'type': 'interrupt', 'next': list(graph_state.next), 'confidence_score': latest_state.get('confidence_score', 0.0), 'review_required': True})}\n\n"
 
             # --- STREAM ENDED ---
             # Emit final results from the total accumulated state
@@ -183,3 +193,61 @@ async def get_blueprint(run_id: str):
         return {"error": "Blueprint not found for this run ID"}
     except Exception as e:
         return {"error": f"Error retrieving blueprint: {str(e)}"}
+
+class ResumeRequest(BaseModel):
+    action: str # "proceed" or "refine"
+    overrides: Optional[Dict[str, Any]] = None
+
+@app.post("/api/run/{run_id}/resume")
+async def resume_run(run_id: str, request: ResumeRequest):
+    """
+    Resume an interrupted execution.
+    """
+    print(f"🔄 Resuming task {run_id} with action: {request.action}")
+
+    async def event_generator():
+        config = {"configurable": {"thread_id": run_id}}
+        
+        # If refinement provided, update the state before resuming
+        if request.overrides:
+            print(f"📝 Applying state overrides: {list(request.overrides.keys())}")
+            await app_graph.aupdate_state(config, request.overrides)
+
+        latest_state = {}
+        
+        try:
+            # Resuming by passing None as the first argument to astream_events
+            async for event in app_graph.astream_events(None, config=config, version="v2"):
+                kind = event.get("event")
+                name = event.get("name")
+                
+                if kind in ["on_chain_end", "on_node_end"]:
+                    output = event.get("data", {}).get("output")
+                    if output and isinstance(output, dict):
+                        latest_state.update(output)
+
+                if kind == "on_chain_start" and name in ["confidence_check", "synthesizer"]:
+                    display_names = {
+                        "confidence_check": "Evaluating results confidence...",
+                        "synthesizer": "Synthesizing final report...",
+                    }
+                    msg = display_names.get(name, f"Executing {name}...")
+                    yield f"data: {json.dumps({'type': 'progress', 'message': msg})}\n\n"
+
+            # Check if interrupted again
+            graph_state = await app_graph.aget_state(config)
+            if graph_state.next:
+                yield f"data: {json.dumps({'type': 'interrupt', 'next': list(graph_state.next), 'review_required': True})}\n\n"
+            else:
+                # Execution finished, emit final synthesis
+                # We need to fetch the full state since latest_state only has delta from resume
+                full_state = await app_graph.aget_state(config)
+                synthesis = full_state.values.get("synthesis", "")
+                if synthesis:
+                    yield f"data: {json.dumps({'type': 'synthesis', 'markdown': synthesis})}\n\n"
+
+        except Exception as e:
+            print(f"Error in resume_generator: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

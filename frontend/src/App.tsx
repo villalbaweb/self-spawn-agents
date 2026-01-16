@@ -39,6 +39,8 @@ function App() {
   const [logs, setLogs] = useState<string[]>([]);
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
+  const [isInterrupted, setIsInterrupted] = useState<boolean>(false);
+  const [currentRunId, setCurrentRunId] = useState<string | null>(null);
 
   // Graph State
   const [elements, setElements] = useState<any[]>([]);
@@ -46,6 +48,12 @@ function App() {
   const [synthesis, setSynthesis] = useState<string | null>(null); // State for final report
   const [showSynthesis, setShowSynthesis] = useState<boolean>(false);
   const [allAgents, setAllAgents] = useState<AgentInfo[]>([]);
+  const [showRefine, setShowRefine] = useState<boolean>(false);
+  const [refinementText, setRefinementText] = useState<string>('');
+
+  // Specific Node Editing State
+  const [isEditing, setIsEditing] = useState<boolean>(false);
+  const [editInstruction, setEditInstruction] = useState<string>('');
 
   // Ref to access current agents in event handlers (avoids stale closure)
   const agentsRef = useRef<AgentInfo[]>([]);
@@ -53,10 +61,56 @@ function App() {
     agentsRef.current = allAgents;
   }, [allAgents]);
 
-  // Debug: Log when selectedAgent changes
-  useEffect(() => {
-    console.log('selectedAgent state changed:', selectedAgent?.role, selectedAgent?.id);
-  }, [selectedAgent]);
+  const processSSEResponse = async (response: Response) => {
+    if (!response.body) throw new Error("No response body");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+
+            if (data.type === 'start') {
+              setCurrentRunId(data.run_id);
+              setLogs(prev => [...prev, `[START] Run ID: ${data.run_id}`]);
+            }
+            else if (data.type === 'progress') {
+              setLogs(prev => [...prev, `[LOG] ${data.message}`]);
+            }
+            else if (data.type === 'unified_graph') {
+              setLogs(prev => [...prev, `[SUCCESS] Unified Graph received: ${data.agents.length} agents`]);
+              renderUnifiedGraph(data.agents, data.edges);
+            }
+            else if (data.type === 'synthesis') {
+              console.log('✅ Synthesis report received');
+              setLogs(prev => [...prev, `[DONE] Report synthesized`]);
+              setSynthesis(data.markdown);
+              setShowSynthesis(true);
+            }
+            else if (data.type === 'interrupt') {
+              setIsInterrupted(true);
+              setLogs(prev => [...prev, `[PAUSE] Human Review Required (Confidence: ${data.confidence_score ? (data.confidence_score * 100).toFixed(0) : 'low'}%)`]);
+            }
+            else if (data.type === 'error') {
+              setLogs(prev => [...prev, `[ERROR] ${data.message}`]);
+            }
+          } catch (e) {
+            console.warn("Failed to parse SSE line", line);
+          }
+        }
+      }
+    }
+  };
 
   const startRun = async () => {
     if (!taskInput) return;
@@ -69,6 +123,8 @@ function App() {
     setSynthesis(null);
     setShowSynthesis(false);
     setAllAgents([]);
+    setIsInterrupted(false);
+    setCurrentRunId(null);
 
     try {
       const response = await fetch(`${API_URL}/api/run`, {
@@ -77,55 +133,35 @@ function App() {
         body: JSON.stringify({ task: taskInput })
       });
 
-      if (!response.body) throw new Error("No response body");
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-
-              if (data.type === 'start') {
-                setLogs(prev => [...prev, `[START] Run ID: ${data.run_id}`]);
-              }
-              else if (data.type === 'progress') {
-                setLogs(prev => [...prev, `[LOG] ${data.message}`]);
-              }
-              else if (data.type === 'unified_graph') {
-                setLogs(prev => [...prev, `[SUCCESS] Unified Graph received: ${data.agents.length} agents`]);
-                renderUnifiedGraph(data.agents, data.edges);
-              }
-              else if (data.type === 'synthesis') {
-                console.log('✅ Synthesis report received, length:', data.markdown?.length);
-                setLogs(prev => [...prev, `[DONE] Report synthesized`]);
-                setSynthesis(data.markdown);
-                setShowSynthesis(true);
-              }
-              else if (data.type === 'error') {
-                setLogs(prev => [...prev, `[ERROR] ${data.message}`]);
-              }
-            } catch (e) {
-              console.warn("Failed to parse SSE line", line);
-            }
-          }
-        }
-      }
+      await processSSEResponse(response);
 
     } catch (e: any) {
       console.error("Run failed:", e);
       setError(e.message || "Unknown error occurred");
       setLogs(prev => [...prev, `[FATAL ERROR] ${e.message}`]);
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  const handleResume = async (action: 'proceed' | 'refine', overrides?: any) => {
+    if (!currentRunId) return;
+
+    setIsRunning(true);
+    setIsInterrupted(false);
+    setLogs(prev => [...prev, `[RESUME] Sending ${action} command...`]);
+
+    try {
+      const response = await fetch(`${API_URL}/api/run/${currentRunId}/resume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, overrides })
+      });
+
+      await processSSEResponse(response);
+    } catch (e: any) {
+      console.error("Resume failed:", e);
+      setLogs(prev => [...prev, `[ERROR] Resume failed: ${e.message}`]);
     } finally {
       setIsRunning(false);
     }
@@ -231,6 +267,56 @@ function App() {
 
   return (
     <div className="app-container">
+      {/* HITL Interrupt Overlay */}
+      {isInterrupted && (
+        <div className="hitl-overlay">
+          <div className="hitl-banner">
+            <div className="hitl-icon">⚠️</div>
+            <div className="hitl-text">
+              <h3>Human Review Required</h3>
+              <p>Aggregate confidence is below threshold. Please review research or refine instructions.</p>
+            </div>
+            <div className="hitl-actions">
+              {!showRefine ? (
+                <>
+                  <button className="hitl-btn proceed" onClick={() => handleResume('proceed')}>
+                    Proceed Anyway
+                  </button>
+                  <button className="hitl-btn refine" onClick={() => setShowRefine(true)}>
+                    Refine Instructions
+                  </button>
+                  <button className="hitl-btn close" onClick={() => setIsInterrupted(false)}>
+                    Close
+                  </button>
+                </>
+              ) : (
+                <div className="hitl-refine-area">
+                  <textarea
+                    className="hitl-input"
+                    placeholder="Enter new instructions or critique..."
+                    value={refinementText}
+                    onChange={(e) => setRefinementText(e.target.value)}
+                  />
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button className="hitl-btn proceed" onClick={() => {
+                      handleResume('refine', {
+                        additional_instructions: refinementText
+                      });
+                      setShowRefine(false);
+                    }}>
+                      Submit & Resume
+                    </button>
+                    <button className="hitl-btn close" onClick={() => setShowRefine(false)}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <header className="app-header">
         <div className="logo">
           <span className="dot"></span>
@@ -355,8 +441,55 @@ function App() {
               </div>
 
               <div className="field-group">
-                <label>Instruction</label>
-                <div className="text-block">{selectedAgent.instruction}</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label>Instruction</label>
+                  {!isEditing && (
+                    <button
+                      className="metric"
+                      onClick={() => {
+                        setIsEditing(true);
+                        setEditInstruction(selectedAgent.instruction);
+                      }}
+                      style={{ cursor: 'pointer', border: 'none', background: 'transparent', color: '#3498db' }}
+                    >
+                      ✎ Edit
+                    </button>
+                  )}
+                </div>
+
+                {isEditing ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <textarea
+                      className="hitl-input"
+                      value={editInstruction}
+                      onChange={(e) => setEditInstruction(e.target.value)}
+                    />
+                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                      <button
+                        className="hitl-btn close"
+                        onClick={() => setIsEditing(false)}
+                        style={{ fontSize: '11px', padding: '4px 8px' }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        className="hitl-btn refine"
+                        onClick={() => {
+                          handleResume('refine', {
+                            additional_instructions: editInstruction,
+                            target_node_id: selectedAgent.id
+                          });
+                          setIsEditing(false);
+                        }}
+                        style={{ fontSize: '11px', padding: '4px 8px' }}
+                      >
+                        Save & Resize
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-block">{selectedAgent.instruction}</div>
+                )}
               </div>
 
               {selectedAgent.tool_used && (

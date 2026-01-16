@@ -6,30 +6,12 @@ from agents.state import AgentState
 async def synthesizer_node(state: AgentState) -> Dict[str, Any]:
     """
     Final synthesis node that compiles all results into a cohesive Markdown output.
-    Calculates aggregate confidence and sets review_required if below threshold.
+    Uses results aggregated in previous steps.
     """
     task = state.get("task", "")
     subject = state.get("subject", "")
     results = state.get("results", {})
     deliverables = state.get("deliverables", [])
-    all_agents = state.get("all_agents", [])
-    
-    # --- AGGREGATE CONFIDENCE CALCULATION ---
-    confidence_scores = [
-        agent.get("confidence_score", 0.5) 
-        for agent in all_agents 
-        if "confidence_score" in agent
-    ]
-    aggregate_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0.5
-    
-    # HITL threshold: If aggregate confidence < 0.6, flag for review
-    CONFIDENCE_THRESHOLD = 0.6
-    review_required = aggregate_confidence < CONFIDENCE_THRESHOLD
-    
-    if review_required:
-        print(f"⚠️ Low aggregate confidence: {aggregate_confidence:.2f} — HITL review may be required.")
-    else:
-        print(f"✅ Aggregate confidence: {aggregate_confidence:.2f}")
     
     print(f"📝 Synthesizing final output for: {subject}")
     print(f"📦 Required deliverables: {deliverables}")
@@ -95,15 +77,7 @@ Research Results:
             output += f"\n\n---\n### ⚠️ Note: The following deliverables may need additional work:\n" + "\n".join(f"- {m}" for m in missing)
         
         print("✅ Synthesis complete.")
-        return {
-            "synthesis": output,
-            "confidence_score": aggregate_confidence,
-            "review_required": review_required
-        }
+        return {"synthesis": output}
     except Exception as e:
         print(f"❌ Error in synthesizer_node: {e}")
-        return {
-            "synthesis": f"Error generating synthesis: {str(e)}",
-            "confidence_score": 0.0,
-            "review_required": True
-        }
+        return {"synthesis": f"Error generating synthesis: {str(e)}"}
