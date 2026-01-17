@@ -27,5 +27,6 @@ workflow.add_edge("confidence_check", "synthesizer")
 workflow.add_edge("synthesizer", END)
 
 # Use MemorySaver for HITL (Human-in-the-Loop) support
-memory = MemorySaver()
+from agents.shared_memory import memory
 app_graph = workflow.compile(checkpointer=memory)
+

@@ -22,3 +22,4 @@ class AgentState(TypedDict):
     synthesis: str # Final synthesized report markdown
     confidence_score: float # Aggregate confidence score (0.0 - 1.0)
     review_required: bool # If True, HITL pause is triggered before synthesis
+    inner_thread_id: Annotated[str, replace] # Persisted ID for the inner graph execution thread

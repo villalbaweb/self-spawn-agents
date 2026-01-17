@@ -40,6 +40,7 @@ function App() {
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [isInterrupted, setIsInterrupted] = useState<boolean>(false);
+  const [interruptReason, setInterruptReason] = useState<string | null>(null);
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
 
   // Graph State
@@ -99,7 +100,11 @@ function App() {
             }
             else if (data.type === 'interrupt') {
               setIsInterrupted(true);
+              setInterruptReason(data.confidence_reasoning || null);
               setLogs(prev => [...prev, `[PAUSE] Human Review Required (Confidence: ${data.confidence_score ? (data.confidence_score * 100).toFixed(0) : 'low'}%)`]);
+              if (data.confidence_reasoning) {
+                setLogs(prev => [...prev, `[REASON] ${data.confidence_reasoning}`]);
+              }
             }
             else if (data.type === 'error') {
               setLogs(prev => [...prev, `[ERROR] ${data.message}`]);
@@ -274,7 +279,7 @@ function App() {
             <div className="hitl-icon">⚠️</div>
             <div className="hitl-text">
               <h3>Human Review Required</h3>
-              <p>Aggregate confidence is below threshold. Please review research or refine instructions.</p>
+              <p>{interruptReason || "Aggregate confidence is below threshold. Please review research or refine instructions."}</p>
             </div>
             <div className="hitl-actions">
               {!showRefine ? (

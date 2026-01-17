@@ -117,7 +117,31 @@ async def run_orchestrator(request: OrchestratorRequest):
             graph_state = await app_graph.aget_state(config)
             if graph_state.next:
                 print(f"⏸️ Graph interrupted at: {graph_state.next}")
-                yield f"data: {json.dumps({'type': 'interrupt', 'next': list(graph_state.next), 'confidence_score': latest_state.get('confidence_score', 0.0), 'review_required': True})}\n\n"
+                
+                # Extract extended interrupt data if available (from inner_graph_interrupt)
+                interrupt_payload = {}
+                if graph_state.tasks and len(graph_state.tasks) > 0:
+                    task_interrupts = graph_state.tasks[0].interrupts
+                    if task_interrupts and len(task_interrupts) > 0:
+                        interrupt_payload = task_interrupts[0] if isinstance(task_interrupts[0], dict) else {}
+                
+                # Yield interrupt event with all metadata
+                yield "data: " + json.dumps({
+                    'type': 'interrupt', 
+                    'next': list(graph_state.next), 
+                    'confidence_score': interrupt_payload.get('confidence_score', latest_state.get('confidence_score', 0.0)),
+                    'confidence_reasoning': interrupt_payload.get('confidence_reasoning', latest_state.get('confidence_reasoning', '')),
+                    'review_required': True
+                }) + "\n\n"
+                
+                # Also yield the unified graph state captured during interrupt if it exists
+                if interrupt_payload.get("all_agents"):
+                    print(f"📡 Emitting partial unified_graph from interrupt: {len(interrupt_payload['all_agents'])} agents")
+                    yield "data: " + json.dumps({
+                        'type': 'unified_graph', 
+                        'agents': interrupt_payload['all_agents'], 
+                        'edges': interrupt_payload.get('all_edges', [])
+                    }) + "\n\n"
 
             # --- STREAM ENDED ---
             # Emit final results from the total accumulated state
@@ -208,16 +232,25 @@ async def resume_run(run_id: str, request: ResumeRequest):
     async def event_generator():
         config = {"configurable": {"thread_id": run_id}}
         
-        # If refinement provided, update the state before resuming
-        if request.overrides:
-            print(f"📝 Applying state overrides: {list(request.overrides.keys())}")
-            await app_graph.aupdate_state(config, request.overrides)
+        # Build the resume value to pass to the interrupted node
+        if request.action == "refine" and request.overrides:
+            # User provided a manual fix
+            resume_value = {"output": request.overrides.get("output", "")}
+        else:
+            # User said "proceed" - just continue with the original output
+            resume_value = {"action": "proceed"}
+        
+        print(f"📝 Resume value: {resume_value}")
 
         latest_state = {}
         
         try:
-            # Resuming by passing None as the first argument to astream_events
-            async for event in app_graph.astream_events(None, config=config, version="v2"):
+            # Use Command(resume=value) to pass the user's decision to the interrupted node
+            from langgraph.types import Command
+            resume_command = Command(resume=resume_value)
+            
+            # Resume the graph by streaming with the Command as input
+            async for event in app_graph.astream_events(resume_command, config=config, version="v2"):
                 kind = event.get("event")
                 name = event.get("name")
                 
@@ -226,8 +259,9 @@ async def resume_run(run_id: str, request: ResumeRequest):
                     if output and isinstance(output, dict):
                         latest_state.update(output)
 
-                if kind == "on_chain_start" and name in ["confidence_check", "synthesizer"]:
+                if kind == "on_chain_start" and name in ["graph_compiler", "confidence_check", "synthesizer"]:
                     display_names = {
+                        "graph_compiler": "Resuming execution graph...",
                         "confidence_check": "Evaluating results confidence...",
                         "synthesizer": "Synthesizing final report...",
                     }
@@ -237,17 +271,53 @@ async def resume_run(run_id: str, request: ResumeRequest):
             # Check if interrupted again
             graph_state = await app_graph.aget_state(config)
             if graph_state.next:
-                yield f"data: {json.dumps({'type': 'interrupt', 'next': list(graph_state.next), 'review_required': True})}\n\n"
+                print(f"⏸️ Graph interrupted again at: {graph_state.next}")
+                
+                # Extract extended interrupt data if available
+                interrupt_payload = {}
+                if graph_state.tasks and len(graph_state.tasks) > 0:
+                    task_interrupts = graph_state.tasks[0].interrupts
+                    if task_interrupts and len(task_interrupts) > 0:
+                        interrupt_payload = task_interrupts[0] if isinstance(task_interrupts[0], dict) else {}
+                
+                # Yield interrupt event
+                yield "data: " + json.dumps({
+                    'type': 'interrupt', 
+                    'next': list(graph_state.next), 
+                    'confidence_score': interrupt_payload.get('confidence_score', latest_state.get('confidence_score', 0.0)),
+                    'confidence_reasoning': interrupt_payload.get('confidence_reasoning', latest_state.get('confidence_reasoning', '')),
+                    'review_required': True
+                }) + "\n\n"
+                
+                # Also yield the unified graph state captured during interrupt if it exists
+                if interrupt_payload.get("all_agents"):
+                    print(f"📡 Emitting partial unified_graph from resume-interrupt: {len(interrupt_payload['all_agents'])} agents")
+                    yield "data: " + json.dumps({
+                        'type': 'unified_graph', 
+                        'agents': interrupt_payload['all_agents'], 
+                        'edges': interrupt_payload.get('all_edges', [])
+                    }) + "\n\n"
             else:
-                # Execution finished, emit final synthesis
-                # We need to fetch the full state since latest_state only has delta from resume
+                # Execution finished, emit final results
                 full_state = await app_graph.aget_state(config)
                 synthesis = full_state.values.get("synthesis", "")
+                all_agents = full_state.values.get("all_agents", [])
+                all_edges = full_state.values.get("all_edges", [])
+                
+                if all_agents:
+                    print(f"📡 Emitting unified_graph: {len(all_agents)} agents")
+                    yield f"data: {json.dumps({'type': 'unified_graph', 'agents': all_agents, 'edges': all_edges})}\n\n"
+                    
                 if synthesis:
+                    print(f"📡 Emitting synthesis report ({len(synthesis)} chars)")
                     yield f"data: {json.dumps({'type': 'synthesis', 'markdown': synthesis})}\n\n"
+                    
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
         except Exception as e:
             print(f"Error in resume_generator: {e}")
+            import traceback
+            traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
