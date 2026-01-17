@@ -1,8 +1,23 @@
 from langchain_core.messages import SystemMessage, HumanMessage
 from agents.dependencies import llm, llm_mini
+from agents.evaluate_confidence import evaluate_confidence
 from langchain_core.runnables import RunnableConfig
 import re
 import time
+import json
+import os
+
+# --- CONFIGURABLE HITL THRESHOLDS ---
+# Set these environment variables to test HITL behavior:
+# HITL_TIER1_THRESHOLD=0.5 (default) - Below this triggers self-correction
+# HITL_TIER2_THRESHOLD=0.5 (default) - Below this sets low_confidence_flag
+# HITL_TIER3_THRESHOLD=0.3 (default) - Below this triggers Hard Stop interrupt
+# For testing, set HITL_TIER3_THRESHOLD=0.99 to force interrupts on every node.
+TIER1_THRESHOLD = float(os.getenv("HITL_TIER1_THRESHOLD", "0.5"))
+TIER2_THRESHOLD = float(os.getenv("HITL_TIER2_THRESHOLD", "0.5"))
+TIER3_THRESHOLD = float(os.getenv("HITL_TIER3_THRESHOLD", "0.3"))
+
+
 
 async def generate_dynamic_system_prompt(instruction: str, agent_type: str, config: RunnableConfig = None) -> str:
     """
@@ -61,11 +76,17 @@ async def generate_dynamic_system_prompt(instruction: str, agent_type: str, conf
 
 from agents.tools.web_search import web_search
 from agents.tools.python_repl import python_repl
+from agents.self_correct import simple_self_correct
+from langgraph.types import interrupt
 
 async def generic_worker_node(state: dict, instruction: str, agent_type: str, config: RunnableConfig = None) -> dict:
     """
     A generic worker that uses the LLM to perform a task.
     Supports tool calling for recursive subgraphs.
+    Includes 3-Tier Escalation Protocol:
+    - Tier 1: Autonomous Self-Correction (Retry).
+    - Tier 2: Soft Flag (Metadata).
+    - Tier 3: Hard Stop (Interrupt).
     """
     print(f"🤖 {agent_type} working on: {instruction}")
     
@@ -117,12 +138,16 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
         else:
             response = await llm_with_tools.ainvoke(messages)
         
+        final_output = ""
+        tools_available = []
+        
         # Check for tool calls
         if response.tool_calls:
             tool_call = response.tool_calls[0]
             tool_name = tool_call["name"]
             print(f"🛠️ Tool Call Detected: {tool_name}")
             tool_used = tool_name
+            tools_available = [tool_name]
             
             if tool_name == "web_search":
                 tool_args = tool_call["args"]
@@ -149,20 +174,7 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
                         
                         tool_output += f"\n\n[REFINED SEARCH for: {missing_terms}]\n{refined_output}"
                 
-                execution_time = time.time() - start_time
-                return {
-                    "output": f"Search Results:\n{tool_output}",
-                    "metadata": {
-                        "system_prompt": sys_prompt,
-                        "agent_role": agent_type,
-                        "instruction": instruction,
-                        "tool_used": tool_used,
-                        "execution_time_seconds": round(execution_time, 2),
-                        "depth": current_depth,
-                        "status": "completed",
-                        "tools_available": ["web_search"]
-                    }
-                }
+                final_output = f"Search Results:\n{tool_output}"
             
             elif tool_name == "python_repl":
                 tool_args = tool_call["args"]
@@ -171,43 +183,87 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
                 else:
                     tool_output = await python_repl.ainvoke(tool_args)
 
-                execution_time = time.time() - start_time
-                return {
-                    "output": f"Python Execution:\n{tool_output}",
-                    "metadata": {
-                        "system_prompt": sys_prompt,
-                        "agent_role": agent_type,
-                        "instruction": instruction,
-                        "tool_used": "python_repl",
-                        "execution_time_seconds": round(execution_time, 2),
-                        "depth": current_depth,
-                        "status": "completed",
-                        "tools_available": ["python_repl"]
-                    }
-                }
-        
-        # No tool call - direct LLM response
+                final_output = f"Python Execution:\n{tool_output}"
+
+        else:
+            # No tool call - direct LLM response
+            if agent_type.lower() == "researcher":
+                tools_available = ["web_search"]
+            elif agent_type.lower() == "coder":
+                tools_available = ["python_repl"]
+            final_output = response.content
+
         execution_time = time.time() - start_time
-        tools_available = []
-        if agent_type.lower() == "researcher":
-            tools_available = ["web_search"]
-        elif agent_type.lower() == "coder":
-            tools_available = ["python_repl"]
+        
+        # --- TIER 1: CONFIDENCE CHECK & SELF-CORRECTION ---
+        confidence_eval = await evaluate_confidence(instruction, final_output, config)
+        confidence_score = confidence_eval["confidence_score"]
+        confidence_reasoning = confidence_eval["confidence_reasoning"]
+        
+        if confidence_score < TIER1_THRESHOLD:
+             # Trigger self-correction (Tier 1)
+             correction_result = await simple_self_correct(instruction, final_output, confidence_reasoning, agent_type, config)
+             final_output = correction_result["output"]
+             
+             # Re-evaluate confidence
+             confidence_eval = await evaluate_confidence(instruction, final_output, config)
+             confidence_score = confidence_eval["confidence_score"]
+             confidence_reasoning = f"[Self-Corrected] {confidence_eval['confidence_reasoning']}"
+
+        # --- TIER 3: HARD STOP (HITL) ---
+        if confidence_score < TIER3_THRESHOLD:
+            print(f"🛑 [HITL] Tier 3 Hard Stop triggered (Confidence: {confidence_score:.2f}, Threshold: {TIER3_THRESHOLD})")
             
+            interrupt_payload = {
+                "type": "tier3_interrupt",
+                "agent_type": agent_type,
+                "confidence_score": confidence_score,
+                "current_output": final_output,
+                "reasoning": confidence_reasoning,
+                "message": f"Critical failure in {agent_type}: Confidence {confidence_score:.2f} is below safety threshold ({TIER3_THRESHOLD})."
+            }
+            
+            # ⏸️ PAUSE EXECUTION HERE ⏸️
+            # The function will suspend. When resumed, resume_value will contain the user's input.
+            resume_value = interrupt(interrupt_payload)
+            
+            print(f"✅ [HITL] Tier 3 Resumed with: {resume_value}")
+            
+            # Handle Resume Logic
+            if resume_value and isinstance(resume_value, dict):
+                # Scenario A: User provided a manual fix
+                if "output" in resume_value:
+                    final_output = resume_value["output"]
+                    confidence_score = 1.0
+                    confidence_reasoning = "Manually corrected by user."
+                # Scenario B: User said "proceed" (resume_value might be simple action flag) - we keep original output
+                
+        # --- TIER 2: SOFT FLAG ---
+        low_confidence_flag = confidence_score < TIER2_THRESHOLD
+
         return {
-            "output": response.content,
+            "output": final_output,
             "metadata": {
                 "system_prompt": sys_prompt,
                 "agent_role": agent_type,
                 "instruction": instruction,
-                "tool_used": None,
+                "tool_used": tool_used,
                 "execution_time_seconds": round(execution_time, 2),
                 "depth": current_depth,
                 "status": "completed",
-                "tools_available": tools_available
+                "tools_available": tools_available,
+                "confidence_score": confidence_score,
+                "confidence_reasoning": confidence_reasoning,
+                "low_confidence_flag": low_confidence_flag
             }
         }
-    except Exception as e:
+
+    except (Exception) as e:
+        # Check if it's any kind of LangGraph interrupt (which shouldn't be caught)
+        from langgraph.errors import GraphBubbleUp
+        if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__:
+            raise e
+            
         execution_time = time.time() - start_time if 'start_time' in locals() else 0
         return {
             "output": f"Error: {str(e)}",
@@ -220,6 +276,9 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
                 "depth": current_depth if 'current_depth' in locals() else 0,
                 "status": "error",
                 "error_message": str(e),
-                "tools_available": []
+                "tools_available": [],
+                "confidence_score": 0.0,
+                "confidence_reasoning": f"Error during execution: {str(e)}"
             }
         }
+

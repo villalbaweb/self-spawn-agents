@@ -6,7 +6,7 @@ from agents.state import AgentState
 async def synthesizer_node(state: AgentState) -> Dict[str, Any]:
     """
     Final synthesis node that compiles all results into a cohesive Markdown output.
-    Ensures all deliverables are addressed.
+    Uses results aggregated in previous steps.
     """
     task = state.get("task", "")
     subject = state.get("subject", "")
