@@ -131,11 +131,29 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 enriched_instruction = f"{subject_block}" + "\n".join(context_parts) + f"\n\n<task>\n{_instr}\n</task>"
                 
                 result = await generic_worker_node(s, enriched_instruction, _type, config)
+                
+                meta = result.get("metadata", {})
+                current_depth = s.get("depth", 0)
+                agent_data = {
+                    "id": _id,
+                    "role": meta.get("agent_role", _type),
+                    "system_prompt": meta.get("system_prompt", ""),
+                    "instruction": _instr,
+                    "output": result["output"],
+                    "tools": meta.get("tools", []),
+                    "depth": current_depth,
+                    "status": meta.get("status", "completed")
+                }
+                # Transfer other metadata fields
+                for key in ["execution_time_seconds", "tool_used", "tools_available", "error_message", "confidence_score", "confidence_reasoning", "low_confidence_flag"]:
+                    if key in meta:
+                        agent_data[key] = meta[key]
+
                 return {
                     "results": {_id: result["output"]},
-                    "metadata": {_id: result.get("metadata", {})},
-                    "all_agents": result.get("nested_agents", []), # These are aggregated in generic_worker_node
-                    "all_edges": result.get("nested_edges", [])
+                    "metadata": {_id: meta},
+                    "all_agents": [agent_data],
+                    "all_edges": []
                 }
                 
             workflow.add_node(node_id, _node_fn)
@@ -181,33 +199,8 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
     
     # helper for aggregation
     def _aggregate_graph_data(inner_state_data: Dict[str, Any]):
-        current_depth = state.get("depth", 0)
-        execution_metadata = inner_state_data.get("metadata", {})
-        new_agents = []
-        for node in nodes:
-            nid = node["id"]
-            if nid in execution_metadata:
-                meta = execution_metadata[nid]
-                agent_data = {
-                    "id": nid,
-                    "role": meta.get("agent_role", node["agent_type"]),
-                    "system_prompt": meta.get("system_prompt", ""),
-                    "instruction": node["instruction"],
-                    "output": inner_state_data.get("results", {}).get(nid, ""),
-                    "tools": meta.get("tools", []),
-                    "depth": current_depth
-                }
-                for key in ["status", "execution_time_seconds", "tool_used", "tools_available", "error_message", "confidence_score", "confidence_reasoning"]:
-                    if key in meta:
-                        agent_data[key] = meta[key]
-                new_agents.append(agent_data)
-        
-        # Merge manual aggregations with automatic ones from state
-        res_agents = new_agents + inner_state_data.get("all_agents", [])
-        blueprint_edge_data = [{"source": e.source, "target": e.target, "depth": current_depth} for e in blueprint_edges]
-        res_edges = blueprint_edge_data + inner_state_data.get("all_edges", [])
-        
-        return res_agents, res_edges
+        # Data is already aggregated by nodes during execution
+        return inner_state_data.get("all_agents", []), inner_state_data.get("all_edges", [])
 
     # --- 3. CHECK FOR RESUME or START ---
     inner_state = await app.aget_state(inner_config)
@@ -237,16 +230,17 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                             "status": "review_required",
                             "output": val.get("current_output", ""),
                             "confidence_score": confidence_score,
-                            "confidence_reasoning": confidence_reasoning
+                            "confidence_reasoning": confidence_reasoning,
+                            "depth": state.get("depth", 0)
                         }
                         for n in nodes:
                             if n["id"] == current_agent_data["id"]:
                                 current_agent_data["instruction"] = n["instruction"]
                                 break
-                        current_agent_data["depth"] = state.get("depth", 0)
                         break
         
         if current_agent_data:
+            # Update or Add the agent in review
             found = False
             for agent in agg_agents:
                 if agent["id"] == current_agent_data["id"]:
@@ -299,8 +293,9 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 "depth": state.get("depth", 0),
                 "subject": state.get("subject", ""),
                 "metadata": {},
+                # Add horizontal edges to the initial state
                 "all_agents": [],
-                "all_edges": []
+                "all_edges": [{"source": e.source, "target": e.target, "depth": state.get("depth", 0)} for e in blueprint_edges]
             }
              try:
                 await app.ainvoke(initial_dynamic_state, config=inner_config)
@@ -312,7 +307,7 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                     raise e
         else:
             print("✅ Inner graph already completed (no next state).")
-
+ 
     # --- 4. CHECK LOOP CONDITION ---
     inner_state = await app.aget_state(inner_config)
     
