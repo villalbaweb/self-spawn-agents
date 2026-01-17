@@ -5,3 +5,5 @@
 .env
 trace_*.json
 backend/blueprints/*.json
+backend/__pycache__/*
+backend_test/__pycache__/*

@@ -29,10 +29,8 @@ async def generate_dynamic_system_prompt(instruction: str, agent_type: str, conf
     if agent_type.lower() == "orchestrator":
         tool_context = """
     
-    IMPORTANT - You have access to the following tool:
-    - spawn_subgraph(task: str): Use this tool when YOUR assigned task is too complex to complete in a single response. 
-      It will spawn a separate workflow to handle that sub-problem. Only use this if the task genuinely requires 
-      multiple coordinated steps that you cannot do alone."""
+    IMPORTANT - You are a Sub-Orchestrator. Your role is to coordinate a complex sub-task using the full capabilities of the system.
+    Break down the task into logical steps and communicate clearly with your parent orchestrator."""
     elif agent_type.lower() == "researcher":
         tool_context = """
     
@@ -100,7 +98,6 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
 <objective>Execute the user's instruction with high precision and expertise.</objective>
 <constraints>
 - Output the result directly.
-- If the task is too complex or requires multiple steps, call the 'spawn_subgraph' tool.
 - Maintain a professional and technical tone.
 </constraints>"""
 

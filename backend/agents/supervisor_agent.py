@@ -39,9 +39,9 @@ You have the following Agent Types available:
 - **Researcher**: searches for information, reads docs.
 - **Coder**: writes, edits, or debugs code.
 - **Reviewer**: critiques code or plans.
-- **Orchestrator**: coordinates complex multi-step flows.
+- **Sub-Orchestrator**: A specialized agent that coordinates a FULL sub-orchestration pipeline for complex multi-step tasks.
 
-Each node can optionally have `recursive: true` which spawns a FULL sub-orchestration pipeline.
+Each node in the graph can be a regular agent or a **Sub-Orchestrator** (by setting `recursive: true`).
 </context>
 <constraints>
 - Output a JSON structure with 'nodes'.
@@ -51,7 +51,7 @@ Each node can optionally have `recursive: true` which spawns a FULL sub-orchestr
 - If more than 3 subtasks exist, consolidate them into 3 or fewer logical groups.
 </constraints>
 <recursive_guidance>
-Use `recursive: true` ONLY when a subtask genuinely requires MULTI-STEP ORCHESTRATION (e.g., "build an API" needs research, coding, testing).
+Use `recursive: true` (Sub-Orchestrator agent) ONLY when a subtask genuinely requires MULTI-STEP ORCHESTRATION (e.g., "build an API" needs research, coding, testing).
 DO NOT use recursive for:
 - Simple research tasks (use Researcher)
 - Single coding tasks (use Coder)
@@ -59,7 +59,7 @@ DO NOT use recursive for:
 
 SAFEGUARDS:
 - Maximum 1 recursive node per plan to prevent explosion.
-- The recursive sub-orchestration will stay focused on its specific subtask.
+- The Sub-Orchestrator will stay focused on its specific subtask.
 - Prefer simpler agent types unless complexity truly requires orchestration.
 </recursive_guidance>
 <task>Create a plan for the user's request based on the subtasks.</task>"""

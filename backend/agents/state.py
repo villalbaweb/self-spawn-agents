@@ -1,4 +1,5 @@
 from typing import TypedDict, List, Dict, Any, Annotated
+import operator
 
 def replace(a: Any, b: Any) -> Any:
     return b
@@ -12,8 +13,9 @@ class AgentState(TypedDict):
     subtasks: List[str] # Decomposed subtasks
     deliverables: List[str] # Expected outputs (e.g., "Marketing Roadmap", "PDF")
     graph_plan: Dict[str, Any] # Planned LangGraph nodes and edges
-    results: Dict[str, str] # Results from executed nodes
+    results: Annotated[Dict[str, str], operator.ior] # Results from executed nodes, merge dictionaries
     depth: Annotated[int, replace] # Current recursion depth (starts at 0)
+    metadata: Annotated[Dict[str, Dict], operator.ior] # Capture agent metadata (system prompts, etc.)
     blueprint_id: str # ID of the generated blueprint, if any
     # Aggregated data for unified graph rendering
     all_agents: Annotated[List[Dict], merge_lists] # All agents across all subgraphs
