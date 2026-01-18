@@ -1,7 +1,7 @@
-from typing import Dict, Any, Annotated, TypedDict, List
+from typing import Dict, Any, Annotated, List
 from langgraph.graph import StateGraph, START, END
 from langchain_core.runnables import RunnableConfig
-from agents.state import AgentState
+from agents.state import AgentState, replace, merge_lists
 from agents.workers.generic import generic_worker_node
 from agents.blueprint import AppBlueprint, AgentInfo, EdgeInfo
 from agents.shared_memory import memory
@@ -10,25 +10,6 @@ import json
 import uuid
 import os
 from datetime import datetime
-
-def merge_dicts(a: Dict, b: Dict) -> Dict:
-    return {**a, **b}
-
-def merge_lists(a: list, b: list) -> list:
-    return a + b
-
-def replace(a: Any, b: Any) -> Any:
-    return b
-
-class DynamicState(TypedDict):
-    # Use a reducer to allow parallel updates to merge
-    results: Annotated[Dict[str, str], merge_dicts]
-    depth: Annotated[int, replace]
-    subject: str  # Primary subject for drift prevention
-    metadata: Annotated[Dict[str, Dict], merge_dicts] # Capture agent metadata
-    all_agents: Annotated[list, merge_lists] # Aggregated agents from all subgraphs
-    all_edges: Annotated[list, merge_lists] # Aggregated edges from all subgraphs
-    inner_thread_id: Annotated[str, replace] # Persist inner graph thread ID
 
 async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) -> Dict[str, Any]:
     """
@@ -45,8 +26,8 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
         
     # --- 1. COMPILE GRAPH (Deterministic based on plan) ---
     # We re-compile every time, but since it's the same plan, it's fine.
-    # The state is stored in the checkpointer.
-    workflow = StateGraph(DynamicState)
+    # The inner graph uses the SAME AgentState as the outer graph.
+    workflow = StateGraph(AgentState)
     blueprint_edges = []
 
     # Add Nodes
@@ -59,11 +40,12 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
         
         if is_recursive:
             # RECURSIVE NODE: Spawn full sub-orchestration
-            async def _recursive_node_fn(s: DynamicState, config: RunnableConfig, _instr=instruction, _id=node_id, _deps=dependencies):
+            # This is the "Sub-Orchestrator Agent" node
+            async def _recursive_node_fn(s: AgentState, config: RunnableConfig, _instr=instruction, _id=node_id, _deps=dependencies):
                 from agent import app_graph
                 from agents.dependencies import MAX_RECURSION_DEPTH
                 current_depth = s.get("depth", 0)
-                print(f"🔄 [RecursiveNode] Spawning sub-orchestration for: {_instr[:50]}... (Depth: {current_depth})")
+                print(f"🔄 [RecursiveNode] Sub-orchestrator agent starting for: {_instr[:50]}... (Depth: {current_depth})")
                 
                 if current_depth >= MAX_RECURSION_DEPTH:
                     return {
@@ -81,6 +63,7 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                             truncated = dep_output[:2000] + "..." if len(dep_output) > 2000 else dep_output
                             context_parts.append(f"<input_data source=\"{dep_id}\">\n{truncated}\n</input_data>")
                 
+                # Prepare state for the subgraph
                 sub_state = {
                     "task": _instr + ("\n\nContext:\n" + "\n".join(context_parts) if context_parts else ""),
                     "subtasks": [], "graph_plan": {}, "results": {},
@@ -89,8 +72,15 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                     "all_agents": [], "all_edges": []
                 }
                 
+                # We still call ainvoke here for now, but as a "sub-orchestrator agent" node.
+                # In the future, we could replace 'app_graph' with a native subgraph node.
                 if config:
-                    final_sub_state = await app_graph.ainvoke(sub_state, config=config)
+                    # Ensure we pass a unique thread_id for the sub-operation if we want isolation,
+                    # OR use the same one if we want deep addressing (not yet fully supported in this way).
+                    # For now, we use a child thread ID to maintain recursion safety.
+                    sub_config = config.copy()
+                    sub_config["configurable"] = {**sub_config.get("configurable", {}), "thread_id": f"{config['configurable']['thread_id']}_{_id}"}
+                    final_sub_state = await app_graph.ainvoke(sub_state, config=sub_config)
                 else:
                     final_sub_state = await app_graph.ainvoke(sub_state)
                 
@@ -112,7 +102,8 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 parent_agent = {
                     "id": _id, "role": "SubOrchestrator",
                     "instruction": _instr, "output": result_summary,
-                    "tools": [], "depth": current_depth
+                    "tools": [], "depth": current_depth,
+                    "status": "completed"
                 }
                 
                 return {
@@ -124,8 +115,8 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
             
             workflow.add_node(node_id, _recursive_node_fn)
         else:
-            # NORMAL NODE
-            async def _node_fn(s: DynamicState, config: RunnableConfig, _instr=instruction, _type=agent_type, _id=node_id, _deps=dependencies):
+            # NORMAL AGENT NODE
+            async def _node_fn(s: AgentState, config: RunnableConfig, _instr=instruction, _type=agent_type, _id=node_id, _deps=dependencies):
                 context_parts = []
                 results = s.get("results", {})
                 if _deps:
@@ -140,11 +131,29 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 enriched_instruction = f"{subject_block}" + "\n".join(context_parts) + f"\n\n<task>\n{_instr}\n</task>"
                 
                 result = await generic_worker_node(s, enriched_instruction, _type, config)
+                
+                meta = result.get("metadata", {})
+                current_depth = s.get("depth", 0)
+                agent_data = {
+                    "id": _id,
+                    "role": meta.get("agent_role", _type),
+                    "system_prompt": meta.get("system_prompt", ""),
+                    "instruction": _instr,
+                    "output": result["output"],
+                    "tools": meta.get("tools", []),
+                    "depth": current_depth,
+                    "status": meta.get("status", "completed")
+                }
+                # Transfer other metadata fields
+                for key in ["execution_time_seconds", "tool_used", "tools_available", "error_message", "confidence_score", "confidence_reasoning", "low_confidence_flag"]:
+                    if key in meta:
+                        agent_data[key] = meta[key]
+
                 return {
                     "results": {_id: result["output"]},
-                    "metadata": {_id: result.get("metadata", {})},
-                    "all_agents": result.get("nested_agents", []),
-                    "all_edges": result.get("nested_edges", [])
+                    "metadata": {_id: meta},
+                    "all_agents": [agent_data],
+                    "all_edges": []
                 }
                 
             workflow.add_node(node_id, _node_fn)
@@ -188,33 +197,12 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
         
     inner_config = {"configurable": {"thread_id": inner_thread_id}}
     
-    # helper for aggregation (same as before)
+    # helper for aggregation
     def _aggregate_graph_data(inner_state_data: Dict[str, Any]):
-        current_depth = state.get("depth", 0)
-        execution_metadata = inner_state_data.get("metadata", {})
-        new_agents = []
-        for node in nodes:
-            nid = node["id"]
-            if nid in execution_metadata:
-                meta = execution_metadata[nid]
-                agent_data = {
-                    "id": nid,
-                    "role": meta.get("agent_role", node["agent_type"]),
-                    "system_prompt": meta.get("system_prompt", ""),
-                    "instruction": node["instruction"],
-                    "output": inner_state_data.get("results", {}).get(nid, ""),
-                    "tools": meta.get("tools", []),
-                    "depth": current_depth
-                }
-                for key in ["status", "execution_time_seconds", "tool_used", "tools_available", "error_message", "confidence_score", "confidence_reasoning"]:
-                    if key in meta:
-                        agent_data[key] = meta[key]
-                new_agents.append(agent_data)
-        new_edges = [{"source": e.source, "target": e.target, "depth": current_depth} for e in blueprint_edges]
-        return new_agents + inner_state_data.get("all_agents", []), new_edges + inner_state_data.get("all_edges", [])
+        # Data is already aggregated by nodes during execution
+        return inner_state_data.get("all_agents", []), inner_state_data.get("all_edges", [])
 
     # --- 3. CHECK FOR RESUME or START ---
-    # Check if we are resuming from a pause
     inner_state = await app.aget_state(inner_config)
     
     if inner_state.next:
@@ -242,18 +230,17 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                             "status": "review_required",
                             "output": val.get("current_output", ""),
                             "confidence_score": confidence_score,
-                            "confidence_reasoning": confidence_reasoning
+                            "confidence_reasoning": confidence_reasoning,
+                            "depth": state.get("depth", 0)
                         }
-                        # Add prompt info if possible
                         for n in nodes:
                             if n["id"] == current_agent_data["id"]:
                                 current_agent_data["instruction"] = n["instruction"]
                                 break
-                        current_agent_data["depth"] = state.get("depth", 0)
                         break
         
         if current_agent_data:
-            # Merge into agg_agents
+            # Update or Add the agent in review
             found = False
             for agent in agg_agents:
                 if agent["id"] == current_agent_data["id"]:
@@ -273,9 +260,8 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
             "confidence_reasoning": confidence_reasoning
         }
         
-        # 2. INTERRUPT (Suspend Outer Graph)
+        # 2. INTERRUPT
         resume_value = interrupt(interrupt_data)
-        
         print(f"✅ Outer graph resumed with: {resume_value}")
         
         # 3. RESUME INNER GRAPH
@@ -287,7 +273,6 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                     all_interrupt_objs.append(i_obj)
         
         if all_interrupt_objs:
-             # Map decisions to all interrupts
              resume_payload = {i.id: resume_value for i in all_interrupt_objs}
         
         try:
@@ -301,7 +286,6 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
     
     else:
         # --- START PATH ---
-        # If no next state and no values, it's a new run
         if not inner_state.values:
              print("▶️ Starting new Dynamic Graph Execution...")
              initial_dynamic_state = {
@@ -309,8 +293,9 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 "depth": state.get("depth", 0),
                 "subject": state.get("subject", ""),
                 "metadata": {},
+                # Add horizontal edges to the initial state
                 "all_agents": [],
-                "all_edges": []
+                "all_edges": [{"source": e.source, "target": e.target, "depth": state.get("depth", 0)} for e in blueprint_edges]
             }
              try:
                 await app.ainvoke(initial_dynamic_state, config=inner_config)
@@ -322,15 +307,12 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                     raise e
         else:
             print("✅ Inner graph already completed (no next state).")
-
+ 
     # --- 4. CHECK LOOP CONDITION ---
-    # Check if we are paused AGAIN
     inner_state = await app.aget_state(inner_config)
     
     if inner_state.next:
-        print(f"� More interrupts pending. Returning self-loop Command.")
-        # Return Command to re-execute THIS node.
-        # This exits the current step, clearing the 'interrupt' context, so the next run can block again.
+        print(f" More interrupts pending. Returning self-loop Command.")
         return Command(
             goto="graph_compiler", 
             update={"inner_thread_id": inner_thread_id} 
