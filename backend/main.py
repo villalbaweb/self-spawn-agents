@@ -92,7 +92,8 @@ async def run_orchestrator(request: OrchestratorRequest):
                 "task": request.task, 
                 "subtasks": [],
                 "subject": "",
-                "deliverables": []
+                "deliverables": [],
+                "budget_config": {"max_cost": 0.001, "max_steps": 3}  # Add this
             }
             
             # Pass thread_id to support checkpointers/HITL

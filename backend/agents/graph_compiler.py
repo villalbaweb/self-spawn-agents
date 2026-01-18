@@ -387,7 +387,10 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 "metadata": {},
                 # Add horizontal edges to the initial state
                 "all_agents": [],
-                "all_edges": [{"source": e.source, "target": e.target, "depth": state.get("depth", 0)} for e in blueprint_edges]
+                "all_edges": [{"source": e.source, "target": e.target, "depth": state.get("depth", 0)} for e in blueprint_edges],
+                # Pass budget config and usage stats for enforcement
+                "budget_config": state.get("budget_config") or {},
+                "usage_stats": state.get("usage_stats") or {}
             }
              try:
                 await app.ainvoke(initial_dynamic_state, config=inner_config)
@@ -419,5 +422,7 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
         "metadata": inner_state.values.get("metadata", {}),
         "all_agents": combined_agents,
         "all_edges": combined_edges,
-        "inner_thread_id": inner_thread_id
+        "inner_thread_id": inner_thread_id,
+        "usage_stats": inner_state.values.get("usage_stats", {}),
+        "global_signal": inner_state.values.get("global_signal", "")
     }
