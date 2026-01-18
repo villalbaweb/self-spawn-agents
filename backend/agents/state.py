@@ -7,6 +7,13 @@ def replace(a: Any, b: Any) -> Any:
 def merge_lists(a: List, b: List) -> List:
     return a + b
 
+def sum_usage(a: Dict[str, float], b: Dict[str, float]) -> Dict[str, float]:
+    """Reducer to accumulate usage stats (cost, tokens, steps)."""
+    result = dict(a) if a else {}
+    for key, value in (b or {}).items():
+        result[key] = result.get(key, 0.0) + value
+    return result
+
 class AgentState(TypedDict):
     task: str # High-level user prompt
     subject: str # Primary subject/product extracted from task (for drift prevention)
@@ -25,3 +32,7 @@ class AgentState(TypedDict):
     confidence_score: float # Aggregate confidence score (0.0 - 1.0)
     review_required: bool # If True, HITL pause is triggered before synthesis
     inner_thread_id: Annotated[str, replace] # Persisted ID for the inner graph execution thread
+    # Safety Logic (Epic 1)
+    global_signal: Annotated[str, replace] # Global interrupt signal ("INTERRUPT" to stop siblings)
+    usage_stats: Annotated[Dict[str, float], sum_usage] # Accumulated cost/tokens/steps
+    budget_config: Dict[str, float] # Limits: {"max_cost": 2.0, "max_steps": 50}
