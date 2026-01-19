@@ -4,18 +4,10 @@
 **Objective:** Transform the "Self-Spawn" engine from a functional Alpha into a commercially viable, cost-safe Product.
 
 ## Epic 1: Safety Logic (The "Circuit Breakers")
-Focus: Preventing token waste and ensuring crash recovery.
-- [ ] **1.1 Atomic State Persistence** <!-- id: 0 -->
-    - [ ] Refactor `MemorySaver` usage to `post_node_hook` logic.
-    - [ ] Verify `AgentState` is saved after *every* node execution, not just graph end.
-- [ ] **1.2 Zombie Branch Pruning (Critical)** <!-- id: 1 -->
-    - [ ] Add `global_signal` / `interrupt_active` flag to `DynamicState`.
-    - [ ] Implement short-circuit checks at the start of every node execution.
-    - [ ] Test parallel execution where one branch fails and the other stops.
-- [ ] **1.3 Budget Caps & Limits** <!-- id: 2 -->
-    - [ ] Implement global token tracking in `AgentState`.
-    - [ ] Add `max_cost` or `max_steps` config to root graph.
-    - [ ] Implement `BudgetExceededError` handling (Graceful Pause).
+## Epic 1: Safety Logic (The Brakes)
+- [x] Atomic State Persistence (SQLite/Postgres)
+- [x] Zombie Branch Pruning (Global Interrupt Signal)
+- [x] Budget Caps & Limits (Prevent infinite spends)
 
 ## Epic 2: The Time Machine (Advanced HITL)
 Focus: Allowing users to "Rewind", "Fork", and "Replay".
