@@ -4,7 +4,7 @@ from langchain_core.runnables import RunnableConfig
 from agents.state import AgentState, replace, merge_lists
 from agents.workers.generic import generic_worker_node
 from agents.blueprint import AppBlueprint, AgentInfo, EdgeInfo
-from agents.shared_memory import memory
+from agents import shared_memory
 from langgraph.types import interrupt, Command
 import json
 import uuid
@@ -42,6 +42,33 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
             # RECURSIVE NODE: Spawn full sub-orchestration
             # This is the "Sub-Orchestrator Agent" node
             async def _recursive_node_fn(s: AgentState, config: RunnableConfig, _instr=instruction, _id=node_id, _deps=dependencies):
+                # --- PRE-FLIGHT SAFETY CHECKS ---
+                # 1. Zombie Pruning: Check if a sibling has signaled an interrupt
+                if s.get("global_signal") == "INTERRUPT":
+                    print(f"🛑 [SafetyCheck] Recursive node '{_id}' aborted due to global INTERRUPT signal.")
+                    return {
+                        "results": {_id: "[Aborted: Sibling branch triggered interrupt]"},
+                        "metadata": {_id: {"status": "aborted", "agent_role": "SubOrchestrator"}},
+                        "all_agents": [{"id": _id, "role": "SubOrchestrator", "status": "aborted", "depth": s.get("depth", 0), "instruction": _instr, "output": ""}],
+                        "all_edges": []
+                    }
+
+                # 2. Budget Check
+                budget_config = s.get("budget_config") or {}
+                usage_stats = s.get("usage_stats") or {}
+                max_cost = budget_config.get("max_cost")
+                current_cost = usage_stats.get("cost", 0.0)
+
+                if max_cost is not None and current_cost >= max_cost:
+                    print(f"💰 [SafetyCheck] Budget limit reached before recursive node '{_id}'.")
+                    return {
+                        "results": {_id: f"[Budget Limit Reached: ${current_cost:.2f}]"},
+                        "metadata": {_id: {"status": "budget_exceeded", "agent_role": "SubOrchestrator"}},
+                        "global_signal": "INTERRUPT",
+                        "all_agents": [{"id": _id, "role": "SubOrchestrator", "status": "budget_exceeded", "depth": s.get("depth", 0), "instruction": _instr, "output": ""}],
+                        "all_edges": []
+                    }
+
                 from agent import app_graph
                 from agents.dependencies import MAX_RECURSION_DEPTH
                 current_depth = s.get("depth", 0)
@@ -51,7 +78,8 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                     return {
                         "results": {_id: f"[Depth limit reached]"},
                         "metadata": {_id: {"agent_role": "Skipped"}},
-                        "all_agents": [], "all_edges": []
+                        "all_agents": [], "all_edges": [],
+                        "usage_stats": {"steps": 1}
                     }
                 
                 context_parts = []
@@ -63,13 +91,15 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                             truncated = dep_output[:2000] + "..." if len(dep_output) > 2000 else dep_output
                             context_parts.append(f"<input_data source=\"{dep_id}\">\n{truncated}\n</input_data>")
                 
-                # Prepare state for the subgraph
+                # Prepare state for the subgraph, passing budget_config down
                 sub_state = {
                     "task": _instr + ("\n\nContext:\n" + "\n".join(context_parts) if context_parts else ""),
                     "subtasks": [], "graph_plan": {}, "results": {},
                     "depth": current_depth + 1,
                     "subject": s.get("subject", ""),
-                    "all_agents": [], "all_edges": []
+                    "all_agents": [], "all_edges": [],
+                    "budget_config": budget_config,  # Pass budget down to subgraph
+                    "usage_stats": usage_stats  # Pass current usage down
                 }
                 
                 # We still call ainvoke here for now, but as a "sub-orchestrator agent" node.
@@ -87,6 +117,7 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 sub_results = final_sub_state.get("results", {})
                 sub_agents = final_sub_state.get("all_agents", [])
                 sub_edges = final_sub_state.get("all_edges", [])
+                sub_usage = final_sub_state.get("usage_stats", {})
                 synthesis = final_sub_state.get("synthesis", "")
                 result_summary = synthesis if synthesis else str(sub_results)
                 
@@ -106,17 +137,64 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                     "status": "completed"
                 }
                 
+                # Propagate usage from subgraph and add step for this orchestrator
+                usage_update = {"steps": 1}
+                for key, val in sub_usage.items():
+                    usage_update[key] = usage_update.get(key, 0) + val
+
                 return {
                     "results": {_id: result_summary},
                     "metadata": {_id: {"agent_role": "SubOrchestrator"}},
                     "all_agents": [parent_agent] + sub_agents,
-                    "all_edges": hierarchy_edges + sub_edges
+                    "all_edges": hierarchy_edges + sub_edges,
+                    "usage_stats": usage_update
                 }
             
             workflow.add_node(node_id, _recursive_node_fn)
         else:
             # NORMAL AGENT NODE
             async def _node_fn(s: AgentState, config: RunnableConfig, _instr=instruction, _type=agent_type, _id=node_id, _deps=dependencies):
+                # --- PRE-FLIGHT SAFETY CHECKS ---
+                # 1. Zombie Pruning: Check if a sibling has signaled an interrupt
+                if s.get("global_signal") == "INTERRUPT":
+                    print(f"🛑 [SafetyCheck] Node '{_id}' aborted due to global INTERRUPT signal.")
+                    return {
+                        "results": {_id: "[Aborted: Sibling branch triggered interrupt]"},
+                        "metadata": {_id: {"status": "aborted", "agent_role": _type}},
+                        "all_agents": [{"id": _id, "role": _type, "status": "aborted", "depth": s.get("depth", 0), "instruction": _instr, "output": ""}],
+                        "all_edges": []
+                    }
+
+                # 2. Budget Check: Verify cost hasn't exceeded limit
+                budget_config = s.get("budget_config") or {}
+                usage_stats = s.get("usage_stats") or {}
+                max_cost = budget_config.get("max_cost")
+                max_steps = budget_config.get("max_steps")
+                current_cost = usage_stats.get("cost", 0.0)
+                current_steps = usage_stats.get("steps", 0)
+
+                if max_cost is not None and current_cost >= max_cost:
+                    print(f"💰 [SafetyCheck] Budget limit reached (${current_cost:.2f} >= ${max_cost:.2f}). Triggering interrupt.")
+                    interrupt_data = {"type": "tier3_interrupt", "reason": "budget_exceeded", "current_cost": current_cost, "max_cost": max_cost}
+                    return {
+                        "results": {_id: f"[Budget Limit Reached: ${current_cost:.2f}]"},
+                        "metadata": {_id: {"status": "budget_exceeded", "agent_role": _type}},
+                        "global_signal": "INTERRUPT",
+                        "all_agents": [{"id": _id, "role": _type, "status": "budget_exceeded", "depth": s.get("depth", 0), "instruction": _instr, "output": ""}],
+                        "all_edges": []
+                    }
+
+                if max_steps is not None and current_steps >= max_steps:
+                    print(f"🔢 [SafetyCheck] Max steps limit reached ({current_steps} >= {max_steps}). Triggering interrupt.")
+                    return {
+                        "results": {_id: f"[Max Steps Limit Reached: {current_steps}]"},
+                        "metadata": {_id: {"status": "max_steps_exceeded", "agent_role": _type}},
+                        "global_signal": "INTERRUPT",
+                        "all_agents": [{"id": _id, "role": _type, "status": "max_steps_exceeded", "depth": s.get("depth", 0), "instruction": _instr, "output": ""}],
+                        "all_edges": []
+                    }
+
+                # --- EXECUTE NODE ---
                 context_parts = []
                 results = s.get("results", {})
                 if _deps:
@@ -149,12 +227,26 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                     if key in meta:
                         agent_data[key] = meta[key]
 
-                return {
+                # --- POST-EXECUTION: Track usage stats ---
+                # Estimate cost from tokens if available, otherwise increment step count
+                step_cost = meta.get("estimated_cost", 0.01)  # Default small cost per step
+                usage_update = {"steps": 1, "cost": step_cost}
+                
+                # Check if this node triggered a Tier 3 interrupt (low confidence)
+                node_return = {
                     "results": {_id: result["output"]},
                     "metadata": {_id: meta},
                     "all_agents": [agent_data],
-                    "all_edges": []
+                    "all_edges": [],
+                    "usage_stats": usage_update
                 }
+
+                # If low confidence, set global signal to pause siblings
+                if meta.get("low_confidence_flag"):
+                    print(f"⚠️ [SafetyCheck] Node '{_id}' flagged low confidence. Setting global INTERRUPT signal.")
+                    node_return["global_signal"] = "INTERRUPT"
+
+                return node_return
                 
             workflow.add_node(node_id, _node_fn)
     
@@ -183,8 +275,8 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
         if node["id"] not in parent_ids:
             workflow.add_edge(node["id"], END)
             
-    # Compile with SHARED memory
-    app = workflow.compile(checkpointer=memory)
+    # Compile with SHARED memory (accessed at runtime after initialization)
+    app = workflow.compile(checkpointer=shared_memory.memory)
     
     # --- 2. MANAGE INNER STATE ---
     # Retrieve or Create Persistent Thread ID
@@ -295,7 +387,10 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 "metadata": {},
                 # Add horizontal edges to the initial state
                 "all_agents": [],
-                "all_edges": [{"source": e.source, "target": e.target, "depth": state.get("depth", 0)} for e in blueprint_edges]
+                "all_edges": [{"source": e.source, "target": e.target, "depth": state.get("depth", 0)} for e in blueprint_edges],
+                # Pass budget config and usage stats for enforcement
+                "budget_config": state.get("budget_config") or {},
+                "usage_stats": state.get("usage_stats") or {}
             }
              try:
                 await app.ainvoke(initial_dynamic_state, config=inner_config)
@@ -327,5 +422,7 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
         "metadata": inner_state.values.get("metadata", {}),
         "all_agents": combined_agents,
         "all_edges": combined_edges,
-        "inner_thread_id": inner_thread_id
+        "inner_thread_id": inner_thread_id,
+        "usage_stats": inner_state.values.get("usage_stats", {}),
+        "global_signal": inner_state.values.get("global_signal", "")
     }

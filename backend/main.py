@@ -3,13 +3,22 @@ from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
+from contextlib import asynccontextmanager
 from agent import app_graph
 import json
 from agents.semantic_splitter import semantic_splitter_node
+from agents.shared_memory import init_checkpointer, close_checkpointer
 
 import os
 
-app = FastAPI(title="Multi-Agent Orchestrator Backend")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize resources on startup and clean up on shutdown."""
+    await init_checkpointer()
+    yield
+    await close_checkpointer()
+
+app = FastAPI(title="Multi-Agent Orchestrator Backend", lifespan=lifespan)
 
 # Read allowed origins from environment variable, fallback to defaults
 env_origins = os.getenv("ALLOWED_ORIGINS", "")

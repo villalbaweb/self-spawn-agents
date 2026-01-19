@@ -1,5 +1,4 @@
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
 from agents.state import AgentState
 from agents.semantic_splitter import semantic_splitter_node
 from agents.supervisor_agent import supervisor_node
@@ -26,7 +25,23 @@ workflow.add_edge("graph_compiler", "confidence_check")
 workflow.add_edge("confidence_check", "synthesizer")
 workflow.add_edge("synthesizer", END)
 
-# Use MemorySaver for HITL (Human-in-the-Loop) support
-from agents.shared_memory import memory
-app_graph = workflow.compile(checkpointer=memory)
+# Lazy compilation - app_graph is compiled after checkpointer is initialized
+_compiled_graph = None
 
+def get_app_graph():
+    """Get the compiled graph. Must be called after init_checkpointer()."""
+    global _compiled_graph
+    if _compiled_graph is None:
+        from agents.shared_memory import memory
+        if memory is None:
+            raise RuntimeError("Checkpointer not initialized. Call init_checkpointer() first.")
+        _compiled_graph = workflow.compile(checkpointer=memory)
+    return _compiled_graph
+
+# For backwards compatibility, create a proxy that lazily gets the graph
+class _GraphProxy:
+    """Proxy object that forwards attribute access to the lazily compiled graph."""
+    def __getattr__(self, name):
+        return getattr(get_app_graph(), name)
+
+app_graph = _GraphProxy()
