@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import CytoscapeComponent from 'react-cytoscapejs';
 import cytoscape from 'cytoscape';
 import dagre from 'cytoscape-dagre';
+import { HistorySidebar } from './HistorySidebar';
 import './App.css';
 
 // Register dagre layout
@@ -172,8 +173,39 @@ function App() {
     }
   };
 
+  const handleForkRun = async (sourceRunId: string, nodeId?: string, modifications?: any) => {
+    setIsRunning(true);
+    setLogs(prev => [...prev, `[FORK] Forking run ${sourceRunId} ${nodeId ? `at ${nodeId}` : ''}...`]);
+    setElements([]); // Clear graph for new run
+    setSelectedAgent(null);
+    setSynthesis(null);
+    setShowSynthesis(false);
+    setIsInterrupted(false); // Reset interrupt state
+
+    try {
+      const payload: any = {};
+      if (nodeId) payload.node_id = nodeId;
+      if (modifications) payload.modifications = modifications;
+
+      const response = await fetch(`${API_URL}/api/run/${sourceRunId}/fork`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      await processSSEResponse(response);
+    } catch (e: any) {
+      console.error("Fork failed:", e);
+      setLogs(prev => [...prev, `[ERROR] Fork failed: ${e.message}`]);
+      setIsRunning(false);
+    }
+  };
+
   const renderUnifiedGraph = (agents: AgentInfo[], edges: EdgeInfo[]) => {
     setAllAgents(agents);
+
+    // Create a set of valid node IDs for fast lookup
+    const validNodeIds = new Set(agents.map((agent) => agent.id));
 
     const nodes = agents.map((agent) => ({
       data: {
@@ -186,7 +218,18 @@ function App() {
       }
     }));
 
-    const edgeElements = edges.map((edge) => ({
+    // Filter out edges that reference non-existent nodes to prevent Cytoscape crash
+    const validEdges = edges.filter((edge) => {
+      const sourceExists = validNodeIds.has(edge.source);
+      const targetExists = validNodeIds.has(edge.target);
+      if (!sourceExists || !targetExists) {
+        console.warn(`Skipping edge: source=${edge.source} (${sourceExists ? 'exists' : 'missing'}), target=${edge.target} (${targetExists ? 'exists' : 'missing'})`);
+        return false;
+      }
+      return true;
+    });
+
+    const edgeElements = validEdges.map((edge) => ({
       data: {
         source: edge.source,
         target: edge.target,
@@ -272,6 +315,7 @@ function App() {
 
   return (
     <div className="app-container">
+      <HistorySidebar onForkRun={(runId) => handleForkRun(runId)} currentRunId={currentRunId} />
       {/* HITL Interrupt Overlay */}
       {isInterrupted && (
         <div className="hitl-overlay">
@@ -457,7 +501,20 @@ function App() {
                       }}
                       style={{ cursor: 'pointer', border: 'none', background: 'transparent', color: '#3498db' }}
                     >
-                      ✎ Edit
+                      ✎ Edit (Refine)
+                    </button>
+                  )}
+                  {/* Rewind Button */}
+                  {currentRunId && !isEditing && (
+                    <button
+                      className="metric"
+                      onClick={() => {
+                        if (!confirm("Start new run from this point?")) return;
+                        handleForkRun(currentRunId, selectedAgent.id);
+                      }}
+                      style={{ cursor: 'pointer', border: 'none', background: 'transparent', color: '#e67e22', marginLeft: '10px' }}
+                    >
+                      ⏪ Rewind
                     </button>
                   )}
                 </div>

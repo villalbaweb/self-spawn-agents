@@ -220,12 +220,174 @@ async def get_blueprint(run_id: str):
     """
     try:
         blueprint_path = f"blueprints/{run_id}.json"
-        with open(blueprint_path, "r") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {"error": "Blueprint not found for this run ID"}
+        if os.path.exists(blueprint_path):
+            with open(blueprint_path, "r") as f:
+                return json.load(f)
+        return {"error": "Blueprint not found"}
     except Exception as e:
         return {"error": f"Error retrieving blueprint: {str(e)}"}
+
+from history import list_runs, fork_run, find_checkpoint_for_rewind
+
+@app.get("/api/runs")
+async def get_runs_handler():
+    """List all available runs."""
+    return await list_runs()
+
+class ForkRequest(BaseModel):
+    checkpoint_id: Optional[str] = None
+    node_id: Optional[str] = None
+    modifications: Optional[Dict[str, Any]] = None
+
+@app.post("/api/run/{run_id}/fork")
+async def fork_run_handler(run_id: str, request: ForkRequest):
+    """
+    Fork a run (Rewind). 
+    If node_id is provided, finds the checkpoint before that node.
+    Creates a new thread, applies modifications, and resumes execution.
+    
+    For inner agent nodes, we rewind to before graph_compiler and invalidate
+    the target node's results (and all dependent nodes) to force re-execution.
+    """
+    print(f"🍴 Fork request for {run_id}. Node: {request.node_id}, Ckpt: {request.checkpoint_id}")
+    
+    target_checkpoint_id = request.checkpoint_id
+    is_inner_node_rewind = False
+    nodes_to_invalidate = []
+    
+    if request.node_id and not target_checkpoint_id:
+        target_checkpoint_id = await find_checkpoint_for_rewind(run_id, request.node_id)
+        if not target_checkpoint_id:
+             print(f"❌ Could not find checkpoint for node {request.node_id}")
+             async def error_generator():
+                 yield f"data: {json.dumps({'type': 'error', 'message': f'Could not find checkpoint for node {request.node_id}'})}\n\n"
+             return StreamingResponse(error_generator(), media_type="text/event-stream")
+        
+        # Check if this is an inner node rewind (we rewound to graph_compiler start)
+        # by checking if the node is in the graph_plan
+        from history import get_nodes_to_invalidate
+        nodes_to_invalidate = await get_nodes_to_invalidate(run_id, request.node_id)
+        if len(nodes_to_invalidate) > 0:
+            is_inner_node_rewind = True
+            print(f"🔄 Inner node rewind detected. Will invalidate: {nodes_to_invalidate}")
+
+    try:
+        new_run_id = await fork_run(run_id, target_checkpoint_id)
+        
+        # Apply modifications if any
+        new_config = {"configurable": {"thread_id": new_run_id}}
+        
+        # For inner node rewinds, we need to:
+        # 1. Clear the inner_thread_id so graph_compiler creates a fresh inner graph
+        # 2. Remove the target node's results (and dependents) so they get re-executed
+        if is_inner_node_rewind and nodes_to_invalidate:
+            print(f"✏️ Invalidating results for inner node rewind: {nodes_to_invalidate}")
+            
+            # Get current state to modify
+            current_state = await app_graph.aget_state(new_config)
+            if current_state and current_state.values:
+                results = dict(current_state.values.get("results", {}))
+                metadata = dict(current_state.values.get("metadata", {}))
+                all_agents = list(current_state.values.get("all_agents", []))
+                
+                # Remove invalidated nodes from results
+                for node_id in nodes_to_invalidate:
+                    if node_id in results:
+                        del results[node_id]
+                        print(f"  🗑️ Removed result for: {node_id}")
+                    if node_id in metadata:
+                        del metadata[node_id]
+                
+                # Remove invalidated agents from all_agents
+                all_agents = [a for a in all_agents if a.get("id") not in nodes_to_invalidate]
+                
+                # Apply the state update - also clear inner_thread_id to force new inner graph
+                await app_graph.aupdate_state(new_config, {
+                    "results": results,
+                    "metadata": metadata,
+                    "all_agents": all_agents,
+                    "inner_thread_id": None  # Force new inner graph
+                })
+        
+        if request.modifications:
+            print(f"✏️ Applying user modifications to {new_run_id}: {request.modifications}")
+            await app_graph.aupdate_state(new_config, request.modifications)
+            
+        # Stream the new run
+        async def event_generator():
+            yield f"data: {json.dumps({'type': 'start', 'run_id': new_run_id, 'forked_from': run_id})}\n\n"
+            
+            # Resume execution
+            try:
+                # We interpret 'resume' here as 'continue execution from current state'
+                # Pass None as input to resume normal graph flow
+                async for event in app_graph.astream_events(None, config=new_config, version="v2"):
+                    kind = event.get("event")
+                    name = event.get("name")
+                    
+                    if kind in ["on_chain_end", "on_node_end"]:
+                        output = event.get("data", {}).get("output")
+                        if output and isinstance(output, dict):
+                            # Emit partial updates if needed
+                            pass
+
+                    if kind == "on_chain_start" and name in ["graph_compiler", "confidence_check", "synthesizer"]:
+                        display_names = {
+                            "graph_compiler": "Resuming execution graph...",
+                            "confidence_check": "Evaluating results confidence...",
+                            "synthesizer": "Synthesizing final report...",
+                        }
+                        msg = display_names.get(name, f"Executing {name}...")
+                        yield f"data: {json.dumps({'type': 'progress', 'message': msg})}\n\n"
+
+                # Check for interrupts again (copy-pasted logic from run/resume)
+                graph_state = await app_graph.aget_state(new_config)
+                if graph_state.next:
+                     # ... Handle interrupt (same logic as main run)
+                     # For brevity, reusing the standard interrupt emission
+                    interrupt_payload = {}
+                    if graph_state.tasks and len(graph_state.tasks) > 0:
+                        task_interrupts = graph_state.tasks[0].interrupts
+                        if task_interrupts and len(task_interrupts) > 0:
+                            interrupt_payload = task_interrupts[0] if isinstance(task_interrupts[0], dict) else {}
+                    
+                    yield "data: " + json.dumps({
+                        'type': 'interrupt', 
+                        'next': list(graph_state.next), 
+                        'confidence_score': interrupt_payload.get('confidence_score', 0.0),
+                        'confidence_reasoning': interrupt_payload.get('confidence_reasoning', ''),
+                        'review_required': True
+                    }) + "\n\n"
+                    
+                    if interrupt_payload.get("all_agents"):
+                         yield "data: " + json.dumps({
+                            'type': 'unified_graph', 
+                            'agents': interrupt_payload['all_agents'], 
+                            'edges': interrupt_payload.get('all_edges', [])
+                        }) + "\n\n"
+                else:
+                    # Final results
+                    full_state = await app_graph.aget_state(new_config)
+                    synthesis = full_state.values.get("synthesis", "")
+                    all_agents = full_state.values.get("all_agents", [])
+                    all_edges = full_state.values.get("all_edges", [])
+                    
+                    if all_agents:
+                        yield f"data: {json.dumps({'type': 'unified_graph', 'agents': all_agents, 'edges': all_edges})}\n\n"
+                    if synthesis:
+                        yield f"data: {json.dumps({'type': 'synthesis', 'markdown': synthesis})}\n\n"
+                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+            except Exception as e:
+                print(f"Error in fork generator: {e}")
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 class ResumeRequest(BaseModel):
     action: str # "proceed" or "refine"
