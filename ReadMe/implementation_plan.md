@@ -1,7 +1,9 @@
 # Implementation Plan - Phase 2: Safety Logic
 
 ## Goal Description
-Enhance the reliability and cost-efficiency of the Self-Spawn Agents engine by implementing robust safety mechanisms1.  **Atomic State Persistence:** Save state after *every* node execution to enable full crash recovery.
+Enhance the reliability and cost-efficiency of the Self-Spawn Agents engine by implementing robust safety mechanisms
+
+1.  **Atomic State Persistence:** Save state after *every* node execution to enable full crash recovery.
 2.  **Zombie Branch Pruning:** Immediately stop parallel branches when one fails (Tier 3 Interrupt).
 3.  **Budget Caps:** Enforce hard limits on cost/steps to prevent recursive runaways.
 
@@ -15,6 +17,20 @@ Enhance the reliability and cost-efficiency of the Self-Spawn Agents engine by i
 - [x] **Budget Caps & Limits**
     - [x] Add `budget_config` to state.
     - [x] Implement token/cost tracking logic.
+
+## Epic 2 Status: In Progress ⚠️
+- [x] **Rewind & Time Travel Core**
+    - [x] Fix `find_checkpoint_for_rewind` to correctly identify inner agent nodes using `inner_thread_id`.
+    - [x] Verify UI reflects re-execution without errors.
+- [ ] **Advanced State Features**
+    - [ ] Full State Hydration (Fork from arbitrary state).
+    - [ ] Node-Specific Invalidations.
+
+
+## Epic 3: UI & Observability (Phase 2 Focus)
+- [ ] **Tier 2 Warning Visibility**
+    - [ ] Frontend: Design "Yellow" status indicator for nodes/edges.
+    - [ ] Frontend: Display warning logs/messages in the node details panel.
 
 ## User Review Required
 > [!IMPORTANT]
