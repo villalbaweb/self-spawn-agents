@@ -22,9 +22,9 @@ Enhance the reliability and cost-efficiency of the Self-Spawn Agents engine by i
 - [x] **Rewind & Time Travel Core**
     - [x] Fix `find_checkpoint_for_rewind` to correctly identify inner agent nodes using `inner_thread_id`.
     - [x] Verify UI reflects re-execution without errors.
-- [ ] **Advanced State Features**
-    - [ ] Full State Hydration (Fork from arbitrary state).
-    - [ ] Node-Specific Invalidations.
+- [x] **Advanced State Features**
+    - [x] Full State Hydration (Fork from arbitrary state via `/api/hydrate`).
+    - [ ] Node-Specific Invalidations (Epic 2.2).
 
 
 ## Epic 3: UI & Observability (Phase 2 Focus)

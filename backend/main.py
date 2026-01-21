@@ -227,6 +227,93 @@ async def get_blueprint(run_id: str):
     except Exception as e:
         return {"error": f"Error retrieving blueprint: {str(e)}"}
 
+class HydrateRequest(BaseModel):
+    source_thread_id: Optional[str] = None
+    checkpoint_id: Optional[str] = None
+    blueprint: Optional[Dict[str, Any]] = None
+
+@app.get("/api/run/{run_id}/state")
+async def get_run_state(run_id: str):
+    """
+    Stream the current state of a run (agents, edges, synthesis) without executing it.
+    """
+    async def state_generator():
+        config = {"configurable": {"thread_id": run_id}}
+        try:
+            state = await app_graph.aget_state(config)
+            if not state or not state.values:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Run state not found or empty'})}\n\n"
+                return
+
+            values = state.values
+            all_agents = values.get("all_agents", [])
+            all_edges = values.get("all_edges", [])
+            synthesis = values.get("synthesis", "")
+            
+            # Emit run loaded event
+            yield f"data: {json.dumps({'type': 'start', 'run_id': run_id})}\n\n"
+
+            if all_agents:
+                print(f"📡 Replaying unified_graph: {len(all_agents)} agents")
+                yield f"data: {json.dumps({'type': 'unified_graph', 'agents': all_agents, 'edges': all_edges})}\n\n"
+            
+            if synthesis:
+                yield f"data: {json.dumps({'type': 'synthesis', 'markdown': synthesis})}\n\n"
+            
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+        except Exception as e:
+            print(f"Error fetching state: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(state_generator(), media_type="text/event-stream")
+
+@app.post("/api/hydrate")
+async def hydrate_state(request: HydrateRequest):
+    """
+    Hydrate a new execution thread from an existing thread (Fork) 
+    OR from a raw JSON blueprint (State Hydration).
+    Returns: { "run_id": "new-uuid" }
+    """
+    print(f"💧 Hydrate request: source={request.source_thread_id}, has_blueprint={bool(request.blueprint)}")
+    
+    new_run_id = str(uuid4())
+    config = {"configurable": {"thread_id": new_run_id}}
+
+    try:
+        if request.source_thread_id:
+            # Fork from existing run
+            from history import fork_run
+            # fork_run creates a NEW thread ID internally, but we want to control it or get it back.
+            # actually fork_run generates a uuid return it.
+            # let's just use fork_run directly if source provided
+            new_run_id = await fork_run(request.source_thread_id, request.checkpoint_id)
+            print(f"✅ Forked run {request.source_thread_id} -> {new_run_id}")
+            
+        elif request.blueprint:
+            # Hydrate from JSON Blueprint
+            # We assume blueprint contains "task", "subtasks", "graph_plan", etc.
+            initial_state = request.blueprint
+            
+            # Ensure essential fields are present
+            if "task" not in initial_state:
+                initial_state["task"] = "Hydrated Task"
+            
+            # Use aupdate_state to persist this state as the latest checkpoint for the new thread
+            # as_node="start" is not needed, we just update state.
+            await app_graph.aupdate_state(config, initial_state)
+            print(f"✅ Hydrated new thread {new_run_id} from blueprint")
+            
+        else:
+            raise HTTPException(status_code=400, detail="Must provide either source_thread_id or blueprint")
+
+        return {"run_id": new_run_id}
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 from history import list_runs, fork_run, find_checkpoint_for_rewind
 
 @app.get("/api/runs")

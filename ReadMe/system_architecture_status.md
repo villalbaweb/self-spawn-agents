@@ -66,13 +66,13 @@
     *   Live node status updates (Running, Success, Error).
 
 ### Module 8: Interactive Refinement (Human-in-the-Loop)
-*   **Status:** ⚠️ **Partially Operational** (Alpha)
 *   **Core Component:** Interrupt Bubbling & State Injection.
 *   **Function:** Allows users to modify execution mid-flight.
 *   **Current Capabilities:**
     *   Interrupt Bubbling: Inner graph interrupts propagate to root.
     *   Resume with verified Checkpoint Lookup (using `inner_thread_id`).
-    *   🔴 **Missing for Full Operation:** *Node-Specific Invalidations* (Granular re-execution of specific nodes without full rewind) and *State Hydration* (Forking from arbitrary state).
+    *   **Operational:** **State Hydration** (Forking from arbitrary state or cloning existing runs via `/api/hydrate`).
+    *   🔴 **Missing for Full Operation:** *Node-Specific Invalidations* (Granular re-execution of specific nodes without full rewind).
 
 ---
 

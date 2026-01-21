@@ -173,27 +173,84 @@ function App() {
     }
   };
 
-  const handleForkRun = async (sourceRunId: string, nodeId?: string, modifications?: any) => {
+  // Load a run's state without executing it (e.g. after fork or URL load)
+  const loadRun = async (runId: string) => {
     setIsRunning(true);
-    setLogs(prev => [...prev, `[FORK] Forking run ${sourceRunId} ${nodeId ? `at ${nodeId}` : ''}...`]);
-    setElements([]); // Clear graph for new run
+    setLogs([]);
+    setError('');
+    setElements([]);
     setSelectedAgent(null);
     setSynthesis(null);
     setShowSynthesis(false);
-    setIsInterrupted(false); // Reset interrupt state
+    setIsInterrupted(false);
+    setCurrentRunId(runId);
+
+    // Update URL without reload
+    const newUrl = `${window.location.pathname}?run_id=${runId}`;
+    window.history.pushState({ path: newUrl }, '', newUrl);
 
     try {
-      const payload: any = {};
-      if (nodeId) payload.node_id = nodeId;
-      if (modifications) payload.modifications = modifications;
+      const response = await fetch(`${API_URL}/api/run/${runId}/state`);
+      await processSSEResponse(response);
+    } catch (e: any) {
+      console.error("Load run failed:", e);
+      setError(e.message || "Failed to load run state");
+      setLogs(prev => [...prev, `[ERROR] Load run failed: ${e.message}`]);
+    } finally {
+      setIsRunning(false);
+    }
+  };
 
-      const response = await fetch(`${API_URL}/api/run/${sourceRunId}/fork`, {
+  // Auto-load run from URL on startup
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const runId = params.get('run_id');
+    if (runId && !currentRunId) {
+      console.log("Auto-loading run from URL:", runId);
+      loadRun(runId);
+    }
+  }, []); // Run once on mount
+
+  const handleForkRun = async (sourceRunId: string, nodeId?: string, modifications?: any) => {
+    setIsRunning(true);
+    setLogs(prev => [...prev, `[FORK] Forking run ${sourceRunId} ${nodeId ? `at ${nodeId}` : ''}...`]);
+
+    // Don't clear elements immediately so user sees something while waiting
+    // setElements([]); 
+
+    try {
+      let url = `${API_URL}/api/run/${sourceRunId}/fork`;
+      let body: any = {};
+
+      if (nodeId) {
+        // specific rewind fork (Old API)
+        body.node_id = nodeId;
+        if (modifications) body.modifications = modifications;
+      } else {
+        // Full clone/hydrate (New API)
+        url = `${API_URL}/api/hydrate`;
+        body = { source_thread_id: sourceRunId };
+      }
+
+      const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(body)
       });
 
-      await processSSEResponse(response);
+      // If using /hydrate, it returns { run_id }, so we need to switch to that run
+      if (url.includes('/hydrate')) {
+        const data = await response.json();
+        if (data.run_id) {
+          setLogs(prev => [...prev, `[SUCCESS] Hydrated to new run: ${data.run_id}`]);
+          // Load the new run immediately
+          await loadRun(data.run_id);
+        }
+      } else {
+        // /fork streams events (legacy / specific rewind)
+        await processSSEResponse(response);
+      }
+
     } catch (e: any) {
       console.error("Fork failed:", e);
       setLogs(prev => [...prev, `[ERROR] Fork failed: ${e.message}`]);
@@ -201,6 +258,8 @@ function App() {
     }
   };
 
+  // Helper placeholder - in reality we keep the old /fork for rewinds for now
+  // and use /hydrate for the "Fork Button".
   const renderUnifiedGraph = (agents: AgentInfo[], edges: EdgeInfo[]) => {
     setAllAgents(agents);
 
@@ -384,6 +443,27 @@ function App() {
           <button className="run-btn" onClick={startRun} disabled={isRunning}>
             {isRunning ? 'Running...' : '▶ Start Run'}
           </button>
+
+          {/* Fork Button */}
+          {currentRunId && !isRunning && (
+            <button
+              className="fork-btn"
+              style={{
+                background: 'transparent',
+                border: '1px solid #e1b12c',
+                color: '#e1b12c',
+                marginLeft: '10px',
+                padding: '8px 16px',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
+              onClick={() => {
+                if (confirm("Create a new copy of this run?")) handleForkRun(currentRunId);
+              }}
+            >
+              ⑂ Fork Run
+            </button>
+          )}
 
           {synthesis && (
             <button className="synthesis-btn" onClick={() => setShowSynthesis(true)}>
