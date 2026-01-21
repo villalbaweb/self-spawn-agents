@@ -332,92 +332,87 @@ async def fork_run_handler(run_id: str, request: ForkRequest):
     Fork a run (Rewind). 
     If node_id is provided, finds the checkpoint before that node.
     Creates a new thread, applies modifications, and resumes execution.
-    
-    For inner agent nodes, we rewind to before graph_compiler and invalidate
-    the target node's results (and all dependent nodes) to force re-execution.
+    Targeted Sub-Incision: Targets the specific sub-graph layer where the node lives.
     """
     print(f"🍴 Fork request for {run_id}. Node: {request.node_id}, Ckpt: {request.checkpoint_id}")
     
-    target_checkpoint_id = request.checkpoint_id
-    is_inner_node_rewind = False
-    nodes_to_invalidate = []
-    
-    if request.node_id and not target_checkpoint_id:
-        target_checkpoint_id = await find_checkpoint_for_rewind(run_id, request.node_id)
-        if not target_checkpoint_id:
-             print(f"❌ Could not find checkpoint for node {request.node_id}")
-             async def error_generator():
-                 yield f"data: {json.dumps({'type': 'error', 'message': f'Could not find checkpoint for node {request.node_id}'})}\n\n"
-             return StreamingResponse(error_generator(), media_type="text/event-stream")
-        
-        # Check if this is an inner node rewind (we rewound to graph_compiler start)
-        # by checking if the node is in the graph_plan
-        from history import get_nodes_to_invalidate
-        nodes_to_invalidate = await get_nodes_to_invalidate(run_id, request.node_id)
-        if len(nodes_to_invalidate) > 0:
-            is_inner_node_rewind = True
-            print(f"🔄 Inner node rewind detected. Will invalidate: {nodes_to_invalidate}")
-
     try:
-        new_run_id = await fork_run(run_id, target_checkpoint_id)
+        # 1. Find the base checkpoint and the target thread
+        checkpoint_id = request.checkpoint_id
+        target_thread_id = run_id
         
-        # Apply modifications if any
-        new_config = {"configurable": {"thread_id": new_run_id}}
-        
-        # For inner node rewinds, we need to:
-        # 1. Clear the inner_thread_id so graph_compiler creates a fresh inner graph
-        # 2. Remove the target node's results (and dependents) so they get re-executed
-        if is_inner_node_rewind and nodes_to_invalidate:
-            print(f"✏️ Invalidating results for inner node rewind: {nodes_to_invalidate}")
+        if request.node_id and not checkpoint_id:
+            lookup = await find_checkpoint_for_rewind(run_id, request.node_id)
+            if lookup:
+                target_thread_id, checkpoint_id = lookup
+                print(f"🎯 Targeted rewind: Node '{request.node_id}' found in thread '{target_thread_id}' at checkpoint '{checkpoint_id}'")
+            else:
+                async def error_generator():
+                    yield f"data: {json.dumps({'type': 'error', 'message': f'Could not find checkpoint for node {request.node_id}'})}\n\n"
+                return StreamingResponse(error_generator(), media_type="text/event-stream")
+
+        # 2. Fork the Target Lineage
+        # If target_thread_id != run_id, we need to fork the target thread and link it to a forked master.
+        # For our current architecture, we support 2-level surgical rewinds.
+        if target_thread_id != run_id:
+            print(f"🌳 Recursive Fork: Target is inner thread '{target_thread_id}'")
+            new_master_id = await fork_run(run_id)
+            new_target_id = await fork_run(target_thread_id, checkpoint_id)
             
-            # Get current state to modify
-            current_state = await app_graph.aget_state(new_config)
-            if current_state and current_state.values:
-                results = dict(current_state.values.get("results", {}))
-                metadata = dict(current_state.values.get("metadata", {}))
-                all_agents = list(current_state.values.get("all_agents", []))
-                
-                # Remove invalidated nodes from results
-                for node_id in nodes_to_invalidate:
-                    if node_id in results:
-                        del results[node_id]
-                        print(f"  🗑️ Removed result for: {node_id}")
-                    if node_id in metadata:
-                        del metadata[node_id]
-                
-                # Remove invalidated agents from all_agents
-                all_agents = [a for a in all_agents if a.get("id") not in nodes_to_invalidate]
-                
-                # Apply the state update - also clear inner_thread_id to force new inner graph
-                await app_graph.aupdate_state(new_config, {
-                    "results": results,
-                    "metadata": metadata,
-                    "all_agents": all_agents,
-                    "inner_thread_id": None  # Force new inner graph
-                })
-        
+            # Map the new master to the new inner thread
+            master_config = {"configurable": {"thread_id": new_master_id}}
+            await app_graph.aupdate_state(master_config, {"inner_thread_id": new_target_id})
+            
+            final_run_id = new_master_id
+            target_thread_fork_id = new_target_id
+        else:
+            new_run_id = await fork_run(run_id, checkpoint_id)
+            final_run_id = new_run_id
+            target_thread_fork_id = new_run_id
+            
+        target_config = {"configurable": {"thread_id": target_thread_fork_id}}
+        new_master_config = {"configurable": {"thread_id": final_run_id}}
+
+        # 3. Apply Node-Specific Invalidation
+        if request.node_id:
+            from history import get_nodes_to_invalidate
+            nodes_to_clear = await get_nodes_to_invalidate(target_thread_id, request.node_id)
+            print(f"🔄 Invalidating {len(nodes_to_clear)} results in {target_thread_fork_id}")
+            
+            # Clear results in the NEW thread
+            clear_vals = {"results": {node: None for node in nodes_to_clear}}
+            await app_graph.aupdate_state(target_config, clear_vals)
+
+        # 4. Apply Modifications
         if request.modifications:
-            print(f"✏️ Applying user modifications to {new_run_id}: {request.modifications}")
-            await app_graph.aupdate_state(new_config, request.modifications)
+            print(f"✏️ Applying modifications to {target_thread_fork_id}: {request.modifications}")
             
-        # Stream the new run
+            if "new_instruction" in request.modifications and request.node_id:
+                state = await app_graph.aget_state(target_config)
+                if state and state.values:
+                    graph_plan = dict(state.values.get("graph_plan", {}))
+                    nodes = list(graph_plan.get("nodes", []))
+                    for i, node in enumerate(nodes):
+                        if node.get("id") == request.node_id:
+                            nodes[i] = dict(node)
+                            nodes[i]["instruction"] = request.modifications["new_instruction"]
+                            print(f"🎯 SURGICAL UPDATE: Instruction for '{request.node_id}' updated")
+                            break
+                    graph_plan["nodes"] = nodes
+                    request.modifications["graph_plan"] = graph_plan
+                    del request.modifications["new_instruction"]
+
+            await app_graph.aupdate_state(target_config, request.modifications)
+            
+        # 5. Helper to stream events
         async def event_generator():
-            yield f"data: {json.dumps({'type': 'start', 'run_id': new_run_id, 'forked_from': run_id})}\n\n"
+            yield f"data: {json.dumps({'type': 'start', 'run_id': final_run_id, 'forked_from': run_id})}\n\n"
             
-            # Resume execution
             try:
-                # We interpret 'resume' here as 'continue execution from current state'
-                # Pass None as input to resume normal graph flow
-                async for event in app_graph.astream_events(None, config=new_config, version="v2"):
+                async for event in app_graph.astream_events(None, config=new_master_config, version="v2"):
                     kind = event.get("event")
                     name = event.get("name")
                     
-                    if kind in ["on_chain_end", "on_node_end"]:
-                        output = event.get("data", {}).get("output")
-                        if output and isinstance(output, dict):
-                            # Emit partial updates if needed
-                            pass
-
                     if kind == "on_chain_start" and name in ["graph_compiler", "confidence_check", "synthesizer"]:
                         display_names = {
                             "graph_compiler": "Resuming execution graph...",
@@ -427,20 +422,18 @@ async def fork_run_handler(run_id: str, request: ForkRequest):
                         msg = display_names.get(name, f"Executing {name}...")
                         yield f"data: {json.dumps({'type': 'progress', 'message': msg})}\n\n"
 
-                # Check for interrupts again (copy-pasted logic from run/resume)
-                graph_state = await app_graph.aget_state(new_config)
-                if graph_state.next:
-                     # ... Handle interrupt (same logic as main run)
-                     # For brevity, reusing the standard interrupt emission
+                # Post-stream State Check
+                final_state = await app_graph.aget_state(new_master_config)
+                if final_state.next:
                     interrupt_payload = {}
-                    if graph_state.tasks and len(graph_state.tasks) > 0:
-                        task_interrupts = graph_state.tasks[0].interrupts
-                        if task_interrupts and len(task_interrupts) > 0:
+                    if final_state.tasks:
+                        task_interrupts = final_state.tasks[0].interrupts
+                        if task_interrupts:
                             interrupt_payload = task_interrupts[0] if isinstance(task_interrupts[0], dict) else {}
                     
                     yield "data: " + json.dumps({
                         'type': 'interrupt', 
-                        'next': list(graph_state.next), 
+                        'next': list(final_state.next), 
                         'confidence_score': interrupt_payload.get('confidence_score', 0.0),
                         'confidence_reasoning': interrupt_payload.get('confidence_reasoning', ''),
                         'review_required': True
@@ -453,11 +446,9 @@ async def fork_run_handler(run_id: str, request: ForkRequest):
                             'edges': interrupt_payload.get('all_edges', [])
                         }) + "\n\n"
                 else:
-                    # Final results
-                    full_state = await app_graph.aget_state(new_config)
-                    synthesis = full_state.values.get("synthesis", "")
-                    all_agents = full_state.values.get("all_agents", [])
-                    all_edges = full_state.values.get("all_edges", [])
+                    synthesis = final_state.values.get("synthesis", "")
+                    all_agents = final_state.values.get("all_agents", [])
+                    all_edges = final_state.values.get("all_edges", [])
                     
                     if all_agents:
                         yield f"data: {json.dumps({'type': 'unified_graph', 'agents': all_agents, 'edges': all_edges})}\n\n"
@@ -466,10 +457,11 @@ async def fork_run_handler(run_id: str, request: ForkRequest):
                     yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
             except Exception as e:
-                print(f"Error in fork generator: {e}")
+                print(f"Error in fork stream: {e}")
                 yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
         return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 
     except Exception as e:
         import traceback

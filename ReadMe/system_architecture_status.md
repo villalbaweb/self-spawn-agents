@@ -72,7 +72,7 @@
     *   Interrupt Bubbling: Inner graph interrupts propagate to root.
     *   Resume with verified Checkpoint Lookup (using `inner_thread_id`).
     *   **Operational:** **State Hydration** (Forking from arbitrary state or cloning existing runs via `/api/hydrate`).
-    *   🔴 **Missing for Full Operation:** *Node-Specific Invalidations* (Granular re-execution of specific nodes without full rewind).
+    *   **Operational:** **Node-Specific Invalidation** (Surgical re-runs via "⏪ Rewind" button in Inspector Panel).
 
 ---
 

@@ -213,21 +213,27 @@ function App() {
 
   const handleForkRun = async (sourceRunId: string, nodeId?: string, modifications?: any) => {
     setIsRunning(true);
-    setLogs(prev => [...prev, `[FORK] Forking run ${sourceRunId} ${nodeId ? `at ${nodeId}` : ''}...`]);
+    setLogs(prev => [...prev, `[FORK] ${nodeId ? `Rewinding to node ${nodeId}` : 'Cloning run'} ${sourceRunId}...`]);
 
-    // Don't clear elements immediately so user sees something while waiting
-    // setElements([]); 
+    // For node-specific rewind, reset UI state so user sees the rerun happen
+    if (nodeId) {
+      setElements([]);
+      setSelectedAgent(null);
+      setSynthesis(null);
+      setShowSynthesis(false);
+      setIsInterrupted(false);
+    }
 
     try {
       let url = `${API_URL}/api/run/${sourceRunId}/fork`;
       let body: any = {};
 
       if (nodeId) {
-        // specific rewind fork (Old API)
+        // specific rewind fork
         body.node_id = nodeId;
         if (modifications) body.modifications = modifications;
       } else {
-        // Full clone/hydrate (New API)
+        // Full clone/hydrate
         url = `${API_URL}/api/hydrate`;
         body = { source_thread_id: sourceRunId };
       }
@@ -242,18 +248,20 @@ function App() {
       if (url.includes('/hydrate')) {
         const data = await response.json();
         if (data.run_id) {
-          setLogs(prev => [...prev, `[SUCCESS] Hydrated to new run: ${data.run_id}`]);
+          setLogs(prev => [...prev, `[SUCCESS] Cloned to new run: ${data.run_id}`]);
           // Load the new run immediately
           await loadRun(data.run_id);
         }
       } else {
-        // /fork streams events (legacy / specific rewind)
+        // /fork streams events and auto-resumes execution
+        setLogs(prev => [...prev, `[REWIND] Re-executing from node...`]);
         await processSSEResponse(response);
       }
 
     } catch (e: any) {
       console.error("Fork failed:", e);
       setLogs(prev => [...prev, `[ERROR] Fork failed: ${e.message}`]);
+    } finally {
       setIsRunning(false);
     }
   };
@@ -625,7 +633,18 @@ function App() {
                         }}
                         style={{ fontSize: '11px', padding: '4px 8px' }}
                       >
-                        Save & Resize
+                        Save & Refine
+                      </button>
+                      <button
+                        className="hitl-btn refine"
+                        onClick={() => {
+                          if (!confirm("Start new run from this point with modified instruction?")) return;
+                          handleForkRun(currentRunId!, selectedAgent.id, { new_instruction: editInstruction });
+                          setIsEditing(false);
+                        }}
+                        style={{ fontSize: '11px', padding: '4px 8px', backgroundColor: '#e67e22' }}
+                      >
+                        Rewind with New Instruction
                       </button>
                     </div>
                   </div>

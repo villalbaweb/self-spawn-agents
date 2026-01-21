@@ -2,7 +2,7 @@ import asyncio
 import uuid
 import json
 import aiosqlite
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 from agents import shared_memory 
 from agents.shared_memory import CHECKPOINT_DB_PATH
 
@@ -116,121 +116,69 @@ async def fork_run(source_run_id: str, checkpoint_id: str = None) -> str:
     print(f"🍴 Forked run {source_run_id} -> {new_run_id}")
     return new_run_id
 
-async def find_checkpoint_for_rewind(run_id: str, node_id: str) -> Optional[str]:
+async def find_checkpoint_for_rewind(run_id: str, node_id: str) -> Optional[Tuple[str, str]]:
     """
-    Find the checkpoint ID representing the state *before* the specified node executed.
-    This effectively allows rewinding to the moment before 'node_id' started.
+    Find the (thread_id, checkpoint_id) representing the state *before* the specified node executed.
     
     Strategy:
-    - Inner nodes (like research_xxx) run within graph_compiler
-    - graph_compiler creates an inner_thread_id when it starts
-    - We find the checkpoint BEFORE inner_thread_id appeared (before graph_compiler ran)
-    - Then validate that node_id is actually an inner node in the final state
+    1. Check if node_id is in the current thread's graph_plan.
+    2. If yes, find the checkpoint before it started.
+    3. If no, and there is an inner_thread_id, recurse into that thread.
     """
     if not shared_memory.memory:
-        print("❌ find_checkpoint_for_rewind: memory not initialized")
         return None
         
     config = {"configurable": {"thread_id": run_id, "checkpoint_ns": ""}}
+    print(f"🔍 SEARCHING: Node '{node_id}' in thread '{run_id}'")
     
-    print(f"\n{'='*60}")
-    print(f"🔍 CHECKPOINT LOOKUP: Searching for node '{node_id}' in run '{run_id}'")
-    print(f"{'='*60}")
-    
-    # Collect all checkpoints with their channel_values info
-    checkpoints = []
-    
-    async for checkpoint_tuple in shared_memory.memory.alist(config):
-        ct_metadata = checkpoint_tuple.metadata or {}
-        ct_config = checkpoint_tuple.config or {}
-        checkpoint_id = ct_config.get("configurable", {}).get("checkpoint_id", "")
-        step = ct_metadata.get("step", 0)
-        
-        # Get channel_values to check for inner_thread_id
-        channel_values = {}
-        if hasattr(checkpoint_tuple, 'checkpoint') and checkpoint_tuple.checkpoint:
-            channel_values = checkpoint_tuple.checkpoint.get('channel_values', {})
-        
-        has_inner_thread_id = bool(channel_values.get("inner_thread_id"))
-        
-        checkpoints.append({
-            "checkpoint_id": checkpoint_id,
-            "step": step,
-            "has_inner_thread_id": has_inner_thread_id,
-            "parent_config": checkpoint_tuple.parent_config,
-            "channel_values": channel_values,
-        })
-        
-        # Debug: print first few checkpoints
-        if len(checkpoints) <= 5:
-            print(f"   Checkpoint #{len(checkpoints)}: step={step}, id={checkpoint_id[:16]}...")
-            print(f"      has_inner_thread_id: {has_inner_thread_id}")
-            if has_inner_thread_id:
-                print(f"      inner_thread_id: {channel_values.get('inner_thread_id')}")
-    
-    print(f"\n📋 Total checkpoints: {len(checkpoints)}")
-    
-    # Checkpoints are in newest-first order. Reverse to go oldest-first
-    checkpoints.reverse()
-    
-    # Find the checkpoint just before inner_thread_id first appeared
-    graph_compiler_start_ckpt = None
-    for i, ckpt in enumerate(checkpoints):
-        if ckpt["has_inner_thread_id"]:
-            # inner_thread_id appeared at this checkpoint
-            # The checkpoint before this is when graph_compiler was about to start
-            if i > 0:
-                prev_ckpt = checkpoints[i - 1]
-                graph_compiler_start_ckpt = prev_ckpt["checkpoint_id"]
-                print(f"📝 inner_thread_id first appeared at step {ckpt['step']}")
-                print(f"   graph_compiler start checkpoint (step before): {graph_compiler_start_ckpt}")
-            else:
-                # inner_thread_id already present in first checkpoint, use that checkpoint's parent
-                if ckpt["parent_config"]:
-                    graph_compiler_start_ckpt = ckpt["parent_config"].get("configurable", {}).get("checkpoint_id")
-                    print(f"📝 inner_thread_id present from step {ckpt['step']}, using parent")
-            break
-    
-    if not graph_compiler_start_ckpt:
-        print(f"❌ Could not find checkpoint before graph_compiler started")
-        print(f"{'='*60}\n")
+    # 1. Get latest state to see where we are
+    latest_tuple = await shared_memory.memory.aget_tuple(config)
+    if not latest_tuple or not latest_tuple.checkpoint:
         return None
+        
+    checkpoint_vals = latest_tuple.checkpoint.get("channel_values", {})
+    graph_plan = checkpoint_vals.get("graph_plan", {})
+    plan_nodes = graph_plan.get("nodes", [])
+    plan_node_ids = [n.get("id") for n in plan_nodes]
     
-    # Now verify that node_id is actually an inner node
-    # Check the latest checkpoint for all_agents and graph_plan
-    latest = checkpoints[-1] if checkpoints else None
-    if latest and latest["channel_values"]:
-        channel_vals = latest["channel_values"]
+    # CASE A: Node is in THIS thread's plan
+    if node_id in plan_node_ids:
+        print(f"✅ FOUND: '{node_id}' is in plan for '{run_id}'")
+        # Find the checkpoint just before this node's name appeared in 'tasks' or before it finished
+        # For simplicity in Dynamic Graph, nodes run sequentially in the inner thread.
+        # We look for the newest checkpoint where 'node_id' is NOT yet in 'results'.
         
-        # Check graph_plan.nodes
-        graph_plan = channel_vals.get("graph_plan", {})
-        plan_nodes = graph_plan.get("nodes", [])
-        plan_node_ids = [n.get("id") for n in plan_nodes]
-        print(f"   graph_plan node IDs: {plan_node_ids}")
+        checkpoints = []
+        async for cp in shared_memory.memory.alist(config):
+            checkpoints.append(cp)
         
-        if node_id in plan_node_ids:
-            print(f"✅ FOUND: '{node_id}' is in graph_plan")
-            print(f"   Returning checkpoint: {graph_compiler_start_ckpt}")
-            print(f"{'='*60}\n")
-            return graph_compiler_start_ckpt
+        # Newest first. Find the first checkpoint where the node results don't exist yet
+        for cp in checkpoints:
+            vals = cp.checkpoint.get("channel_values", {})
+            results = vals.get("results", {})
+            if node_id not in results:
+                # This is a state where the node hasn't finished.
+                # Is it the state JUST BEFORE it started?
+                # In LangGraph, moving from node A to node B creates a checkpoint.
+                return (run_id, cp.config.get("configurable", {}).get("checkpoint_id"))
+
+        # Fallback: earliest checkpoint
+        if checkpoints:
+            return (run_id, checkpoints[-1].config.get("configurable", {}).get("checkpoint_id"))
+            
+    # CASE B: Node might be in an INNER thread
+    inner_thread_id = checkpoint_vals.get("inner_thread_id")
+    if inner_thread_id:
+        print(f"⏬ Node not in '{run_id}'. Recursing into inner thread '{inner_thread_id}'")
+        return await find_checkpoint_for_rewind(inner_thread_id, node_id)
         
-        # Check all_agents (for nodes from recursive sub-orchestrators)
-        all_agents = channel_vals.get("all_agents", [])
-        agent_ids = [a.get("id") for a in all_agents]
-        print(f"   all_agents IDs: {agent_ids}")
-        
-        if node_id in agent_ids:
-            print(f"✅ FOUND: '{node_id}' is in all_agents")
-            print(f"   Returning checkpoint: {graph_compiler_start_ckpt}")
-            print(f"{'='*60}\n")
-            return graph_compiler_start_ckpt
-        
-        print(f"❌ Node '{node_id}' NOT found in graph_plan or all_agents")
-    else:
-        print(f"❌ No latest checkpoint or channel_values available")
+    # CASE C: Node might be a 'graph_compiler' child (Legacy/Branch approach)
+    # If the user selected a top-level node but we don't see it in plan_nodes (unlikely)
+    # Or if we want to support the 'Branch-Level' as a fallback.
     
-    print(f"{'='*60}\n")
+    print(f"❌ '{node_id}' not found in '{run_id}' and no more inner threads.")
     return None
+
 
 
 
