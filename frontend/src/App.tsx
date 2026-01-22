@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import CytoscapeComponent from 'react-cytoscapejs';
 import cytoscape from 'cytoscape';
 import dagre from 'cytoscape-dagre';
+import { HistorySidebar } from './HistorySidebar';
 import './App.css';
 
 // Register dagre layout
@@ -172,8 +173,106 @@ function App() {
     }
   };
 
+  // Load a run's state without executing it (e.g. after fork or URL load)
+  const loadRun = async (runId: string) => {
+    setIsRunning(true);
+    setLogs([]);
+    setError('');
+    setElements([]);
+    setSelectedAgent(null);
+    setSynthesis(null);
+    setShowSynthesis(false);
+    setIsInterrupted(false);
+    setCurrentRunId(runId);
+
+    // Update URL without reload
+    const newUrl = `${window.location.pathname}?run_id=${runId}`;
+    window.history.pushState({ path: newUrl }, '', newUrl);
+
+    try {
+      const response = await fetch(`${API_URL}/api/run/${runId}/state`);
+      await processSSEResponse(response);
+    } catch (e: any) {
+      console.error("Load run failed:", e);
+      setError(e.message || "Failed to load run state");
+      setLogs(prev => [...prev, `[ERROR] Load run failed: ${e.message}`]);
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  // Auto-load run from URL on startup
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const runId = params.get('run_id');
+    if (runId && !currentRunId) {
+      console.log("Auto-loading run from URL:", runId);
+      loadRun(runId);
+    }
+  }, []); // Run once on mount
+
+  const handleForkRun = async (sourceRunId: string, nodeId?: string, modifications?: any) => {
+    setIsRunning(true);
+    setLogs(prev => [...prev, `[FORK] ${nodeId ? `Rewinding to node ${nodeId}` : 'Cloning run'} ${sourceRunId}...`]);
+
+    // For node-specific rewind, reset UI state so user sees the rerun happen
+    if (nodeId) {
+      setElements([]);
+      setSelectedAgent(null);
+      setSynthesis(null);
+      setShowSynthesis(false);
+      setIsInterrupted(false);
+    }
+
+    try {
+      let url = `${API_URL}/api/run/${sourceRunId}/fork`;
+      let body: any = {};
+
+      if (nodeId) {
+        // specific rewind fork
+        body.node_id = nodeId;
+        if (modifications) body.modifications = modifications;
+      } else {
+        // Full clone/hydrate
+        url = `${API_URL}/api/hydrate`;
+        body = { source_thread_id: sourceRunId };
+      }
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
+      // If using /hydrate, it returns { run_id }, so we need to switch to that run
+      if (url.includes('/hydrate')) {
+        const data = await response.json();
+        if (data.run_id) {
+          setLogs(prev => [...prev, `[SUCCESS] Cloned to new run: ${data.run_id}`]);
+          // Load the new run immediately
+          await loadRun(data.run_id);
+        }
+      } else {
+        // /fork streams events and auto-resumes execution
+        setLogs(prev => [...prev, `[REWIND] Re-executing from node...`]);
+        await processSSEResponse(response);
+      }
+
+    } catch (e: any) {
+      console.error("Fork failed:", e);
+      setLogs(prev => [...prev, `[ERROR] Fork failed: ${e.message}`]);
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  // Helper placeholder - in reality we keep the old /fork for rewinds for now
+  // and use /hydrate for the "Fork Button".
   const renderUnifiedGraph = (agents: AgentInfo[], edges: EdgeInfo[]) => {
     setAllAgents(agents);
+
+    // Create a set of valid node IDs for fast lookup
+    const validNodeIds = new Set(agents.map((agent) => agent.id));
 
     const nodes = agents.map((agent) => ({
       data: {
@@ -186,7 +285,18 @@ function App() {
       }
     }));
 
-    const edgeElements = edges.map((edge) => ({
+    // Filter out edges that reference non-existent nodes to prevent Cytoscape crash
+    const validEdges = edges.filter((edge) => {
+      const sourceExists = validNodeIds.has(edge.source);
+      const targetExists = validNodeIds.has(edge.target);
+      if (!sourceExists || !targetExists) {
+        console.warn(`Skipping edge: source=${edge.source} (${sourceExists ? 'exists' : 'missing'}), target=${edge.target} (${targetExists ? 'exists' : 'missing'})`);
+        return false;
+      }
+      return true;
+    });
+
+    const edgeElements = validEdges.map((edge) => ({
       data: {
         source: edge.source,
         target: edge.target,
@@ -272,6 +382,7 @@ function App() {
 
   return (
     <div className="app-container">
+      <HistorySidebar onForkRun={(runId) => handleForkRun(runId)} currentRunId={currentRunId} />
       {/* HITL Interrupt Overlay */}
       {isInterrupted && (
         <div className="hitl-overlay">
@@ -340,6 +451,27 @@ function App() {
           <button className="run-btn" onClick={startRun} disabled={isRunning}>
             {isRunning ? 'Running...' : '▶ Start Run'}
           </button>
+
+          {/* Fork Button */}
+          {currentRunId && !isRunning && (
+            <button
+              className="fork-btn"
+              style={{
+                background: 'transparent',
+                border: '1px solid #e1b12c',
+                color: '#e1b12c',
+                marginLeft: '10px',
+                padding: '8px 16px',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
+              onClick={() => {
+                if (confirm("Create a new copy of this run?")) handleForkRun(currentRunId);
+              }}
+            >
+              ⑂ Fork Run
+            </button>
+          )}
 
           {synthesis && (
             <button className="synthesis-btn" onClick={() => setShowSynthesis(true)}>
@@ -457,7 +589,20 @@ function App() {
                       }}
                       style={{ cursor: 'pointer', border: 'none', background: 'transparent', color: '#3498db' }}
                     >
-                      ✎ Edit
+                      ✎ Edit (Refine)
+                    </button>
+                  )}
+                  {/* Rewind Button */}
+                  {currentRunId && !isEditing && (
+                    <button
+                      className="metric"
+                      onClick={() => {
+                        if (!confirm("Start new run from this point?")) return;
+                        handleForkRun(currentRunId, selectedAgent.id);
+                      }}
+                      style={{ cursor: 'pointer', border: 'none', background: 'transparent', color: '#e67e22', marginLeft: '10px' }}
+                    >
+                      ⏪ Rewind
                     </button>
                   )}
                 </div>
@@ -488,7 +633,18 @@ function App() {
                         }}
                         style={{ fontSize: '11px', padding: '4px 8px' }}
                       >
-                        Save & Resize
+                        Save & Refine
+                      </button>
+                      <button
+                        className="hitl-btn refine"
+                        onClick={() => {
+                          if (!confirm("Start new run from this point with modified instruction?")) return;
+                          handleForkRun(currentRunId!, selectedAgent.id, { new_instruction: editInstruction });
+                          setIsEditing(false);
+                        }}
+                        style={{ fontSize: '11px', padding: '4px 8px', backgroundColor: '#e67e22' }}
+                      >
+                        Rewind with New Instruction
                       </button>
                     </div>
                   </div>

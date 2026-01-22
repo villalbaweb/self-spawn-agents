@@ -11,13 +11,13 @@
 
 ## Epic 2: The Time Machine (Advanced HITL)
 Focus: Allowing users to "Rewind", "Fork", and "Replay".
-- [ ] **2.1 State Hydrator (Blueprint -> State)** <!-- id: 3 -->
-    - [ ] Create `POST /hydrate` endpoint.
-    - [ ] Implement mapping logic: `GraphBlueprint` JSON -> LangGraph `StateSnapshot`.
-    - [ ] Verify "Forking" a run from a historical blueprint.
-- [ ] **2.2 Node-Specific Invalidation** <!-- id: 4 -->
-    - [ ] Add backend method to clear/invalidate specific node outputs in state.
-    - [ ] Expose "Re-run Node" action in the React Visualizer.
+- [x] **2.1 State Hydrator (Blueprint -> State)** <!-- id: 3 -->
+    - [x] Create `POST /hydrate` endpoint.
+    - [x] Implement mapping logic: `GraphBlueprint` JSON -> LangGraph `StateSnapshot`.
+    - [x] Verify "Forking" a run from a historical blueprint via UI and API.
+- [x] **2.2 Node-Specific Invalidation** <!-- id: 4 -->
+    - [x] Backend method to clear/invalidate specific node outputs on rewind.
+    - [x] "⏪ Rewind" action available in the React Visualizer Inspector Panel.
 
 ## Epic 3: User Optics & Polish
 Focus: Trust and Transparency.

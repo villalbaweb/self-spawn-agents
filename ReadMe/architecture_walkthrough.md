@@ -189,6 +189,13 @@ data: {"type": "result", "results": {...}}
 data: {"type": "synthesis", "markdown": "# Executive Summary..."}
 ```
 
+### GET /api/run/{run_id}/state
+Fetch and stream the current state (graph, synthesis) of a completed or paused run. Useful for deep linking or loading forked runs.
+
+### POST /api/hydrate
+Initialize a new run from a source thread or a custom blueprint.
+**Request:** `{"source_thread_id": "...", "blueprint": {...}}`
+
 ### POST /api/cancel/{request_id}
 Cancel a running orchestrator task.
 
@@ -235,3 +242,32 @@ docker compose up --build -d
 - [ ] LLM synthesis fallback for low-confidence results
 - [ ] Google Maps API for retail location mapping
 - [ ] Real freight APIs (Shippo, FedEx) for landed costs
+
+## Testing State Hydration (Epic 2.1)
+
+### 1. Forking a Run via UI
+1.  Start a new run with a complex task (e.g., "Research luxury e-bikes").
+2.  Wait for the graph to execute partially or fully.
+3.  Click the **Fork Run** button (⑂ icon) in the header.
+4.  Confirm the dialog.
+5.  **Verify:** The browser redirects to a new Run ID, and the logs show `[SUCCESS] Hydrated to new run: <uuid>`. The execution history should be preserved in the new thread.
+
+### 2. Manual Blueprint Hydration (Advanced)
+To start a run from a custom JSON blueprint (e.g., for debugging specific edge cases) using PowerShell:
+
+```powershell
+$body = @{
+    blueprint = @{
+        task = "Debug Task"
+        graph_plan = @{
+            nodes = @(
+                @{ id = "test_node"; agent_type = "Researcher"; instruction = "Test instruction" }
+            )
+        }
+    }
+} | ConvertTo-Json -Depth 10
+
+Invoke-RestMethod -Uri "http://localhost:8000/api/hydrate" -Method Post -Body $body -ContentType "application/json"
+```
+
+**Verify:** The API returns `{"run_id": "..."}`. Navigate to `http://localhost:5173/?run_id=<run_id>` to see the hydrated state.

@@ -1,6 +1,6 @@
 # Self-Spawn Agents: System Architecture & Module Status
 
-**Date:** 2026-01-16
+**Date:** 2026-01-19
 **Overall Status:** Phase 1 Complete (Core Functionality Operational).
 **Current Focus:** Phase 2 (Robustness, Safety, Productization).
 
@@ -54,7 +54,8 @@
     *   Tier 1 (Autonomous Retry): Working.
     *   Tier 2 (Soft Warning): Internally logs, but needs UI visibility (Phase 2).
     *   Tier 3 (Hard Interrupt): Pauses execution on Critical failure.
-    *   **Pending Phase 2:** *Zombie Branch Pruning* (Stopping sibling branches when interruptions occur).
+    *   **Operational:** *Zombie Branch Pruning* (Stopping sibling branches via Global Signals implemented & verified during Budget Logic tests).
+    *   🔴 **Missing for Full Operation:** Frontend UI to display Tier 2 "Soft Warnings" to the user (currently only logs internally).
 
 ### Module 7: Blueprinting & Visualization
 *   **Status:** ✅ **Operational**
@@ -65,13 +66,13 @@
     *   Live node status updates (Running, Success, Error).
 
 ### Module 8: Interactive Refinement (Human-in-the-Loop)
-*   **Status:** ⚠️ **Partially Operational** (Alpha)
 *   **Core Component:** Interrupt Bubbling & State Injection.
 *   **Function:** Allows users to modify execution mid-flight.
 *   **Current Capabilities:**
     *   Interrupt Bubbling: Inner graph interrupts propagate to root.
-    *   Resume with Override: Users can edit inputs/instructions of paused nodes.
-    *   **Pending Phase 2:** *State Hydration* (Forking/Replaying from a specific state) and *Node-Specific Invalidations*.
+    *   Resume with verified Checkpoint Lookup (using `inner_thread_id`).
+    *   **Operational:** **State Hydration** (Forking from arbitrary state or cloning existing runs via `/api/hydrate`).
+    *   **Operational:** **Node-Specific Invalidation** (Surgical re-runs via "⏪ Rewind" button in Inspector Panel).
 
 ---
 
