@@ -1,3 +1,4 @@
+import pytest
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
 import asyncio
@@ -5,8 +6,6 @@ import sys
 import os
 
 # Add paths to allow importing 'backend' package and 'agent' module
-sys.path.append(os.getcwd())
-sys.path.append(os.path.join(os.getcwd(), 'backend'))
 
 # Import after path setup
 # We need to test specific functions, not necessarily mock the whole module dict at import time 
@@ -16,6 +15,8 @@ from backend.main import cancel_orchestrator, running_tasks
 
 class TestCancellation(unittest.IsolatedAsyncioTestCase):
     
+    @pytest.mark.asyncio
+    @pytest.mark.asyncio
     async def test_cancel_existing_task(self):
         """Verify that cancel_orchestrator calls .cancel() on the task."""
         print("\n🧪 Testing Task Cancellation...")
@@ -37,6 +38,8 @@ class TestCancellation(unittest.IsolatedAsyncioTestCase):
             if req_id in running_tasks:
                 del running_tasks[req_id]
         
+    @pytest.mark.asyncio
+    @pytest.mark.asyncio
     async def test_cancel_non_existent_task(self):
         """Verify 404 for unknown task."""
         print("\n🧪 Testing Cancel Unknown Task...")

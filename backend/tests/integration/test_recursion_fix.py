@@ -1,3 +1,4 @@
+import pytest
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
 import os
@@ -6,7 +7,6 @@ import os
 os.environ["MAX_RECURSION_DEPTH"] = "3"
 
 import sys
-sys.path.append(os.path.join(os.getcwd(), 'backend'))
 
 from agents.tools.subgraph import spawn_subgraph
 from agents.workers.generic import generic_worker_node
@@ -15,6 +15,8 @@ from agents.state import AgentState
 class TestInceptionFix(unittest.IsolatedAsyncioTestCase):
     
     @patch("agent.app_graph") # Patch the actual source where subgraph imports from
+    @pytest.mark.asyncio
+    @pytest.mark.asyncio
     async def test_max_recursion_depth(self, mock_app_graph):
         """Verify that spawn_subgraph blocks recursion when depth >= MAX_RECURSION_DEPTH."""
         print("\n🧪 Testing Max Recursion Limit...")
@@ -45,6 +47,8 @@ class TestInceptionFix(unittest.IsolatedAsyncioTestCase):
     @patch("agents.workers.generic.spawn_subgraph")
     @patch("agents.workers.generic.web_search") 
     @patch("agents.workers.generic.llm")
+    @pytest.mark.asyncio
+    @pytest.mark.asyncio
     async def test_tool_binding_and_depth_injection(self, mock_llm, mock_web_search, mock_spawn_subgraph):
         """Verify Researcher tools and proper depth injection."""
         print("\n🧪 Testing Tool Binding & Depth Injection...")

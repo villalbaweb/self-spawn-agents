@@ -1,13 +1,15 @@
+import pytest
 import asyncio
 import sys
 import os
 import json
 
 # Add backend directory to sys.path
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../backend'))
 
 from agents.graph_compiler import graph_compiler_node
 
+@pytest.mark.asyncio
+@pytest.mark.asyncio
 async def test_forced_subgraph():
     """
     This test FORCES a subgraph spawn by:

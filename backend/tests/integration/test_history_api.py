@@ -26,6 +26,7 @@ def test_client():
         os.remove(test_db_path)
 
 @pytest.mark.asyncio
+@pytest.mark.asyncio
 async def test_history_flow():
     # Initialize checkpointer manually for setup
     await init_checkpointer()
