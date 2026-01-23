@@ -1,23 +1,9 @@
 from langchain_core.messages import SystemMessage, HumanMessage
-from agents.dependencies import llm, llm_mini
+from agents.dependencies import llm, llm_mini, TIER1_THRESHOLD, TIER2_THRESHOLD, TIER3_THRESHOLD
 from agents.evaluate_confidence import evaluate_confidence
 from langchain_core.runnables import RunnableConfig
 import re
 import time
-import json
-import os
-
-# --- CONFIGURABLE HITL THRESHOLDS ---
-# Set these environment variables to test HITL behavior:
-# HITL_TIER1_THRESHOLD=0.5 (default) - Below this triggers self-correction
-# HITL_TIER2_THRESHOLD=0.5 (default) - Below this sets low_confidence_flag
-# HITL_TIER3_THRESHOLD=0.3 (default) - Below this triggers Hard Stop interrupt
-# For testing, set HITL_TIER3_THRESHOLD=0.99 to force interrupts on every node.
-TIER1_THRESHOLD = float(os.getenv("HITL_TIER1_THRESHOLD", "0.5"))
-TIER2_THRESHOLD = float(os.getenv("HITL_TIER2_THRESHOLD", "0.5"))
-TIER3_THRESHOLD = float(os.getenv("HITL_TIER3_THRESHOLD", "0.3"))
-
-
 
 async def generate_dynamic_system_prompt(instruction: str, agent_type: str, config: RunnableConfig = None) -> str:
     """
