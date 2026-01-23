@@ -25,6 +25,9 @@ interface AgentInfo {
   // Confidence (HITL)
   confidence_score?: number;
   confidence_reasoning?: string;
+  // Tier 2 Warnings
+  warning?: string;
+  low_confidence_flag?: boolean;
 }
 
 interface EdgeInfo {
@@ -277,11 +280,13 @@ function App() {
     const nodes = agents.map((agent) => ({
       data: {
         ...agent, // Spread ALL agent data (metadata, etc.)
-        label: `${agent.role}\n${agent.id.substring(0, 12)}`,
+        label: `${agent.warning ? '⚠️ ' : ''}${agent.role}\n${agent.id.substring(0, 12)}`,
       },
       style: {
         'background-color': getColorByRole(agent.role),
-        'background-opacity': 0.9
+        'background-opacity': 0.9,
+        'border-color': agent.warning ? '#f1c40f' : '#333',
+        'border-width': agent.warning ? 4 : 2
       }
     }));
 
@@ -550,6 +555,19 @@ function App() {
               {selectedAgent.error_message && (
                 <div className="error-box">
                   ⚠️ {selectedAgent.error_message}
+                </div>
+              )}
+
+              {selectedAgent.warning && (
+                <div className="warning-box" style={{
+                  background: 'rgba(241, 196, 15, 0.2)',
+                  border: '1px solid #f1c40f',
+                  borderRadius: '4px',
+                  padding: '8px 12px',
+                  marginBottom: '12px',
+                  color: '#f1c40f'
+                }}>
+                  ⚠️ {selectedAgent.warning}
                 </div>
               )}
 

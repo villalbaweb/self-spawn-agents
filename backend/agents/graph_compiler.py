@@ -232,6 +232,13 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 step_cost = meta.get("estimated_cost", 0.01)  # Default small cost per step
                 usage_update = {"steps": 1, "cost": step_cost}
                 
+                # --- TIER 2 WARNING: Budget approaching limit ---
+                warning_message = None
+                new_cost = current_cost + step_cost
+                if max_cost is not None and new_cost > max_cost * 0.8:
+                    warning_message = f"Budget Warning: {(new_cost / max_cost * 100):.0f}% used (${new_cost:.2f}/${max_cost:.2f})"
+                    print(f"⚠️ [Tier2Warning] {warning_message}")
+
                 # Check if this node triggered a Tier 3 interrupt (low confidence)
                 node_return = {
                     "results": {_id: result["output"]},
@@ -240,6 +247,10 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                     "all_edges": [],
                     "usage_stats": usage_update
                 }
+                
+                # Attach warning to agent_data if present
+                if warning_message:
+                    agent_data["warning"] = warning_message
 
                 # If low confidence, set global signal to pause siblings
                 if meta.get("low_confidence_flag"):

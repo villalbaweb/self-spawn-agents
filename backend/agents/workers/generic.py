@@ -237,6 +237,11 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
                 
         # --- TIER 2: SOFT FLAG ---
         low_confidence_flag = confidence_score < TIER2_THRESHOLD
+        
+        # Build warning message if Tier 2 triggered
+        warning = None
+        if low_confidence_flag:
+            warning = f"Low Confidence Warning: {(confidence_score * 100):.0f}% - {confidence_reasoning}"
 
         return {
             "output": final_output,
@@ -251,7 +256,8 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
                 "tools_available": tools_available,
                 "confidence_score": confidence_score,
                 "confidence_reasoning": confidence_reasoning,
-                "low_confidence_flag": low_confidence_flag
+                "low_confidence_flag": low_confidence_flag,
+                "warning": warning
             }
         }
 
