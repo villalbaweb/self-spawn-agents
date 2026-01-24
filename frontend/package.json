@@ -14,6 +14,7 @@
     "axios": "^1.13.2",
     "cytoscape": "^3.33.1",
     "cytoscape-dagre": "^2.5.0",
+    "cytoscape-fcose": "^2.2.0",
     "dagre": "^0.8.5",
     "react": "^19.2.0",
     "react-cytoscapejs": "^2.0.0",

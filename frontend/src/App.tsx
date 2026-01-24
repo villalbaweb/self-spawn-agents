@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
 import CytoscapeComponent from 'react-cytoscapejs';
 import cytoscape from 'cytoscape';
-import dagre from 'cytoscape-dagre';
+import fcose from 'cytoscape-fcose';
 import { HistorySidebar } from './HistorySidebar';
 import './App.css';
 
-// Register dagre layout
-cytoscape.use(dagre);
+// Register fcose layout
+cytoscape.use(fcose);
 
 interface AgentInfo {
   id: string;
@@ -284,9 +284,14 @@ function App() {
       },
       style: {
         'background-color': getColorByRole(agent.role),
-        'background-opacity': 0.9,
-        'border-color': agent.warning ? '#f1c40f' : '#333',
-        'border-width': agent.warning ? 4 : 2
+        'background-opacity': 0.2, // Glassmorphism base
+        'border-color': agent.warning ? '#f1c40f' : getColorByRole(agent.role),
+        'border-opacity': 0.6,
+        'border-width': agent.warning ? 4 : 2,
+        'text-outline-color': '#000',
+        'text-outline-width': 2,
+        'text-outline-opacity': 1,
+        'color': '#fff'
       }
     }));
 
@@ -337,12 +342,26 @@ function App() {
   };
 
   const layout = {
-    name: 'dagre',
-    rankDir: 'TB',
-    nodeSep: 150,
-    rankSep: 150,
-    edgeSep: 50,
-    padding: 100
+    name: 'fcose',
+    quality: "default",
+    randomize: false,
+    animate: true,
+    animationDuration: 1000,
+    fit: true,
+    padding: 30,
+    nodeDimensionsIncludeLabels: true,
+    uniformNodeDimensions: false,
+    packComponents: true,
+    step: "all",
+    nodeRepulsion: (_node: any) => 4500,
+    idealEdgeLength: (_edge: any) => 100,
+    edgeElasticity: (_edge: any) => 0.45,
+    nestingFactor: 0.1,
+    gravity: 0.25,
+    numIter: 2500,
+    tile: true,
+    tilingPaddingVertical: 10,
+    tilingPaddingHorizontal: 10
   };
 
   const style = [
@@ -352,46 +371,55 @@ function App() {
         'label': 'data(label)',
         'text-valign': 'center',
         'text-halign': 'center',
+        'font-family': 'Inter, Roboto, sans-serif',
         'font-size': '10px',
+        'font-weight': 500,
         'color': '#fff',
         'text-wrap': 'wrap',
-        'width': 100,
-        'height': 50,
-        'shape': 'roundrectangle',
-        'border-width': 2,
-        'border-color': '#333'
+        'width': 80,
+        'height': 80,
+        'shape': 'ellipse',
+        'overlay-padding': '6px',
+        'z-index': 10
       }
     },
     {
       selector: 'node[warning]',
       style: {
-        'border-width': 6,
+        'border-width': 4,
         'border-color': '#f1c40f',
         'background-color': '#f1c40f',
-        'background-opacity': 0.15,
-        'text-outline-width': 1,
-        'text-outline-color': '#333'
+        'background-opacity': 0.2,
+        'text-outline-width': 2,
+        'text-outline-color': '#333',
+        'shadow-blur': 10,
+        'shadow-color': '#f1c40f',
+        'shadow-opacity': 0.5
       }
     },
     {
       selector: 'edge',
       style: {
-        'width': 2,
-        'line-color': '#808e9b',
-        'target-arrow-color': '#808e9b',
+        'width': 1.5,
+        'line-color': '#a4b0be',
+        'line-opacity': 0.6,
+        'target-arrow-color': '#a4b0be',
         'target-arrow-shape': 'triangle',
-        'curve-style': 'taxi', // Use taxi for cleaner routing in hierarchies
-        'taxi-direction': 'vertical',
-        'taxi-turn': 20
+        'curve-style': 'bezier',
+        'arrow-scale': 0.8
       }
     },
     {
       selector: 'edge[type="hierarchy"]',
       style: {
-        'line-style': 'dashed',
-        'width': 3,
-        'line-color': '#0be881',
-        'target-arrow-color': '#0be881'
+        'line-style': 'solid', // solid but thinner/lighter looks better in modern UI than dashed sometimes, but let's keep it distinct
+        'width': 2,
+        'line-color': '#2ed573',
+        'line-opacity': 0.8,
+        'target-arrow-color': '#2ed573',
+        'curve-style': 'unbundled-bezier',
+        'control-point-distances': [20, -20], // subtle wave
+        'control-point-weights': [0.25, 0.75]
       }
     }
   ];
