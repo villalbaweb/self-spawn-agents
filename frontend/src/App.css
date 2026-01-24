@@ -775,9 +775,6 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: 15px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
 }
 
 .empty-state-text {
@@ -786,6 +783,50 @@ body {
   font-size: 12px;
   font-style: italic;
   margin-top: 40px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.status-dot.completed {
+  background-color: #0be881;
+  box-shadow: 0 0 5px rgba(11, 232, 129, 0.4);
+}
+
+.status-dot.failed {
+  background-color: #ff5e57;
+  box-shadow: 0 0 5px rgba(255, 94, 87, 0.4);
+}
+
+.status-dot.active {
+  background-color: #3c40c6;
+  animation: pulse-dot 2s infinite;
+}
+
+.status-dot.unknown {
+  background-color: #808e9b;
+}
+
+@keyframes pulse-dot {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.5;
+    transform: scale(0.9);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .loading-spinner {
@@ -812,6 +853,7 @@ body {
   transition: all 0.2s ease;
   position: relative;
   overflow: hidden;
+  margin-bottom: 12px;
 }
 
 .run-item:hover {
@@ -839,13 +881,21 @@ body {
 }
 
 .run-title {
+  display: block;
+  /* Flex can be weird with wrapping text sometimes */
   font-size: 13px;
+  line-height: 1.4;
+  min-height: 20px;
+  height: auto;
   font-weight: 500;
   color: #f1f2f6;
-  margin-bottom: 6px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  margin-bottom: 2px;
+  white-space: normal;
+  /* Allow wrapping */
+  overflow: visible;
+  /* Show everything */
+  padding: 2px 0;
+  word-break: break-word;
 }
 
 .run-meta {
