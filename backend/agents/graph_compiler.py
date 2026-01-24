@@ -223,7 +223,7 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                     "status": meta.get("status", "completed")
                 }
                 # Transfer other metadata fields
-                for key in ["execution_time_seconds", "tool_used", "tools_available", "error_message", "confidence_score", "confidence_reasoning", "low_confidence_flag"]:
+                for key in ["execution_time_seconds", "tool_used", "tools_available", "error_message", "confidence_score", "confidence_reasoning", "low_confidence_flag", "warning"]:
                     if key in meta:
                         agent_data[key] = meta[key]
 

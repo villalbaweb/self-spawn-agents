@@ -363,6 +363,17 @@ function App() {
       }
     },
     {
+      selector: 'node[warning]',
+      style: {
+        'border-width': 6,
+        'border-color': '#f1c40f',
+        'background-color': '#f1c40f',
+        'background-opacity': 0.15,
+        'text-outline-width': 1,
+        'text-outline-color': '#333'
+      }
+    },
+    {
       selector: 'edge',
       style: {
         'width': 2,
