@@ -344,7 +344,7 @@ function App() {
   const layout = {
     name: 'fcose',
     quality: "default",
-    randomize: false,
+    randomize: true,
     animate: true,
     animationDuration: 1000,
     fit: true,
