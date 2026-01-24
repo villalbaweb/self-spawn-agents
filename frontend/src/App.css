@@ -84,6 +84,8 @@ body {
 
 .task-input {
   flex: 1;
+  min-width: 300px;
+  /* Prevent crushing */
   background: #1e272e;
   border: 1px solid #485460;
   color: #fff;
@@ -115,6 +117,46 @@ body {
 .run-btn:disabled {
   background: #485460;
   cursor: not-allowed;
+}
+
+.header-fork-btn {
+  background: transparent;
+  border: 1px solid #e1b12c;
+  color: #e1b12c;
+  padding: 0 16px;
+  height: 40px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.header-fork-btn:hover {
+  background: rgba(225, 177, 44, 0.1);
+}
+
+.synthesis-btn {
+  background: #3c40c6;
+  border: none;
+  color: white;
+  padding: 0 16px;
+  height: 40px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.synthesis-btn:hover {
+  background: #575fcf;
 }
 
 .error-banner {

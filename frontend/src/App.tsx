@@ -516,19 +516,11 @@ function App() {
           {/* Fork Button */}
           {currentRunId && !isRunning && (
             <button
-              className="fork-btn"
-              style={{
-                background: 'transparent',
-                border: '1px solid #e1b12c',
-                color: '#e1b12c',
-                marginLeft: '10px',
-                padding: '8px 16px',
-                borderRadius: '4px',
-                cursor: 'pointer'
-              }}
+              className="header-fork-btn"
               onClick={() => {
                 if (confirm("Create a new copy of this run?")) handleForkRun(currentRunId);
               }}
+              title="Fork Run"
             >
               ⑂ Fork Run
             </button>
