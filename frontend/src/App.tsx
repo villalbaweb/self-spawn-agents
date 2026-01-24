@@ -60,6 +60,9 @@ function App() {
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [editInstruction, setEditInstruction] = useState<string>('');
 
+  // UI State
+  const [isLogsOpen, setIsLogsOpen] = useState<boolean>(true);
+
   // Ref to access current agents in event handlers (avoids stale closure)
   const agentsRef = useRef<AgentInfo[]>([]);
   useEffect(() => {
@@ -88,6 +91,20 @@ function App() {
             if (data.type === 'start') {
               setCurrentRunId(data.run_id);
               setLogs(prev => [...prev, `[START] Run ID: ${data.run_id}`]);
+
+              // Save metadata to localStorage for History UI
+              try {
+                const existing = JSON.parse(localStorage.getItem('agent_run_history') || '{}');
+                existing[data.run_id] = {
+                  task: taskInput || "Untitled Task",
+                  timestamp: new Date().toISOString()
+                };
+                localStorage.setItem('agent_run_history', JSON.stringify(existing));
+                // Dispatch event to notify sidebar
+                window.dispatchEvent(new Event('history-updated'));
+              } catch (e) {
+                console.warn("Failed to save run history", e);
+              }
             }
             else if (data.type === 'progress') {
               setLogs(prev => [...prev, `[LOG] ${data.message}`]);
@@ -529,11 +546,21 @@ function App() {
 
       <div className="main-content">
         {/* Logs Panel */}
-        <div className="logs-pane">
-          <h3>Live Execution Logs</h3>
-          <div className="logs-container">
-            {logs.length === 0 && <span className="log-placeholder">Waiting for execution...</span>}
-            {logs.map((log, i) => <div key={i} className="log-line">{log}</div>)}
+        {/* Logs Panel */}
+        <div className={`logs-pane ${isLogsOpen ? 'open' : 'closed'}`}>
+          <button
+            className="logs-toggle"
+            onClick={() => setIsLogsOpen(!isLogsOpen)}
+            title="Toggle Logs"
+          >
+            {isLogsOpen ? 'Logs' : 'Logs'}
+          </button>
+          <div className="logs-content">
+            <h3>Live Execution Logs</h3>
+            <div className="logs-container">
+              {logs.length === 0 && <span className="log-placeholder">Waiting for execution...</span>}
+              {logs.map((log, i) => <div key={i} className="log-line">{log}</div>)}
+            </div>
           </div>
         </div>
 
