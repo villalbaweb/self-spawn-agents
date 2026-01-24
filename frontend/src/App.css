@@ -125,33 +125,54 @@ body {
 }
 
 .main-content {
+  position: relative;
+  /* Anchor for absolute children */
   display: flex;
   flex: 1;
   overflow: hidden;
 }
 
 .logs-pane {
-  position: relative;
-  background-color: #1e1e24;
+  position: absolute;
+  /* Overlay */
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background-color: rgba(30, 30, 36, 0.95);
+  /* Slight transparency like history */
+  backdrop-filter: blur(12px);
   border-right: 1px solid #333;
   display: flex;
   flex-direction: column;
-  transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1), min-width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  overflow: visible;
-  /* Allow toggle button to hang out if needed, or just contain it */
-  z-index: 10;
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transform: translateX(-100%);
+  /* start closed/off-screen? No, logs logic was width-based. */
+  /* Let's switch to transform-based like history for better performance? 
+     The current logs logic uses width toggling. 
+     If the user wants it EXACTLY like history, history uses transform: translateX(-100%) -> 0.
+     The Logs implementation currently uses width: 0 -> 280px.
+     
+     If I keep width-based but absolute, it will work visually as an overlay.
+     However, width=0 is effectively "closed".
+     Let's stick to width transition for now to minimize code changes, just changing position to absolute.
+  */
+  width: 280px;
+  /* Default open width */
+  z-index: 8000;
+  /* High but below History (9000) */
+  box-shadow: 5px 0 20px rgba(0, 0, 0, 0.3);
 }
 
 .logs-pane.open {
-  width: 280px;
-  min-width: 280px;
+  transform: translateX(0);
 }
 
 .logs-pane.closed {
-  width: 0px;
-  min-width: 0px;
+  transform: translateX(-100%);
   border-right: none;
 }
+
+
 
 .logs-toggle {
   position: absolute;
