@@ -189,7 +189,7 @@ Surgically rewind a run from a specific node.
 
 ## Next Steps (Epic 3: Optics)
 
-- [ ] **Tier 2 Warning Badges**: Display "Yellow" status for low-confidence nodes in UI.
+- [x] **Tier 2 Warning Badges**: Display "Yellow" status for low-confidence nodes in UI.
 - [ ] **Real-Time Cost Badge**: Stream `usage_stats.cost` to the UI Header.
 
 ---

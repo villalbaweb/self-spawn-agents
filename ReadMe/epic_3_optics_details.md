@@ -4,7 +4,7 @@ This document details the components of **Epic 3: User Optics & Polish**, contra
 
 ---
 
-## 3.1 Visual Warning Indicators (Tier 2 Visibility)
+## 3.1 Visual Warning Indicators (Tier 2 Visibility) - [IMPLEMENTED]
 
 **Objective:** Expose "Soft Warnings" (Tier 2 Interrupts) to the user in the UI without stopping execution, so they know *where* the model was unsure.
 

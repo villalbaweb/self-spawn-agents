@@ -21,9 +21,9 @@ Focus: Allowing users to "Rewind", "Fork", and "Replay".
 
 ## Epic 3: User Optics & Polish
 Focus: Trust and Transparency.
-- [ ] **3.1 Visual Warning Indicators** <!-- id: 5 -->
-    - [ ] Update Backend to emit "Tier 2 Warnings" in SSE events.
-    - [ ] Update Frontend Node component to display Yellow Warning badges.
+- [x] **3.1 Visual Warning Indicators** <!-- id: 5 -->
+    - [x] Update Backend to emit "Tier 2 Warnings" in SSE events.
+    - [x] Update Frontend Node component to display Yellow Warning badges.
 - [ ] **3.2 real-time Cost Badge** <!-- id: 6 -->
     - [ ] calculate estimated cost during execution.
     - [ ] streaming update to UI Header.

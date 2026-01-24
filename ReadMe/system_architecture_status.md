@@ -53,7 +53,7 @@
 *   **Function:** Handles errors based on severity (Retry, Warn, Pause) and enforces budgets.
 *   **Current Capabilities:**
     *   Tier 1 (Autonomous Retry): Working.
-    *   Tier 2 (Soft Warning): Internally logs `low_confidence_flag`. UI badge pending.
+    *   Tier 2 (Soft Warning): Internally logs `low_confidence_flag`. **UI badge Active.**
     *   Tier 3 (Hard Interrupt): Pauses execution on Critical failure.
     *   **Zombie Branch Pruning:** Active. Fails in one branch immediately auto-stop parallel siblings to save tokens.
     *   **Budget Caps:** Active. Graphs respect `max_cost` and `max_steps` configs.
@@ -65,7 +65,7 @@
 *   **Current Capabilities:**
     *   Standardized `GraphBlueprint` JSON emission.
     *   Live node status updates (Running, Success, Error).
-    *   **Pending Phase 2b:** Tier 2 Warning Badges (Yellow "!" for low confidence).
+    *   **Active:** Tier 2 Warning Badges (Yellow "!" for low confidence).
     *   **Pending Phase 2b:** Real-time Cost Badge ($) in Header.
 
 ### Module 8: Interactive Refinement (Human-in-the-Loop)
