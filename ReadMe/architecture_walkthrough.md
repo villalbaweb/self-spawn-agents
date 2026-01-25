@@ -154,14 +154,14 @@ semantic_splitter → supervisor → graph_compiler (runs dynamic graph) → syn
 ### Feature 4: Native Worker Subgraph (Epic 4.1) ✅
 - SubOrchestrator nodes use a lightweight native LangGraph subgraph
 - **Skips redundant steps**: No semantic_splitter or supervisor for child tasks
-- **Smart complexity detection**: Heuristics + LLM classify task complexity
+- **Smart complexity detection**: Heuristics + LLM classify task complexity via `should_decompose()`
 - **Execution paths**:
   - **Simple tasks**: Direct execution via `generic_worker_node` (2-3 LLM calls)
   - **Complex tasks**: Mini-planner creates 2-4 parallel workers (3-6 LLM calls)
   - **Recursive spawning**: Complex child tasks in mini-plan spawn their own subgraphs
 - **Cost comparison**: 2-6 LLM calls vs 5-8 with full `app_graph.ainvoke()`
 - **Multi-level hierarchy**: Supports depth 0 → 1 → 2 → 3 recursive decomposition
-- ~60% latency reduction per recursion level
+- ~60-70% latency reduction per recursion level
 - Full state visibility in parent graph
 - Depth limit: 3 (configurable via `MAX_RECURSION_DEPTH`)
 

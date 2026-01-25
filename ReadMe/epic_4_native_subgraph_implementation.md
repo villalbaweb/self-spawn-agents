@@ -129,197 +129,26 @@ class WorkerState(TypedDict):
 
 #### 1.2 Create Worker Subgraph (`backend/agents/subgraphs/worker_subgraph.py`)
 
-```python
-"""
-Native LangGraph Worker Subgraph.
+The `WorkerSubgraph` uses a native `StateGraph` with a streamlined `START → execute → validate → END` flow. It implements **Mini-Orchestration** to handle complex tasks without the full `app_graph` overhead.
 
-This subgraph handles the execution of complex sub-tasks WITHOUT
-running the full orchestration pipeline (semantic_splitter, supervisor).
+##### 1.2.1 Complexity Detection (`should_decompose`)
+A heuristic-first approach to determine if a task needs decomposition:
+- **Strong Indicators**: Keywords like "oauth", "jwt", "rbac", "multiple", "step 1", etc. If 2+ are found, it decomposes regardless of length.
+- **Conjunction Complexity**: Counts " and " conjunctions. 2+ triggers decomposition.
+- **Length Check**: Tasks < 100 chars with no indicators are considered simple.
+- **LLM Fallback**: If uncertain (1-2 indicators), a quick `llm_mini` call classifies the task as `DECOMPOSE` or `SINGLE`.
 
-It provides:
-- Direct task execution via generic_worker_node
-- Confidence evaluation
-- Budget/safety checks
-- Proper state visibility to parent graph
-"""
-from typing import Dict, Any
-from langgraph.graph import StateGraph, START, END
-from langchain_core.runnables import RunnableConfig
+##### 1.2.2 Mini-Planning (`create_mini_plan`)
+A lightweight planner using `llm_mini` with structured output:
+- Breaks tasks into 2-4 **parallel** sub-tasks.
+- Assigns agent types: `Researcher`, `Coder`, or `Reviewer`.
+- No dependency mapping or full graph planning, keeping it fast and cheap.
 
-from agents.subgraphs.state import WorkerState
-from agents.workers.generic import generic_worker_node
-from agents.evaluate_confidence import evaluate_confidence
-from agents.dependencies import MAX_RECURSION_DEPTH
-import time
-
-
-async def execute_node(state: WorkerState, config: RunnableConfig = None) -> Dict[str, Any]:
-    """
-    Execute the task using the generic worker.
-    This is the core execution step of the subgraph.
-    """
-    task = state.get("task", "")
-    subject = state.get("subject", "")
-    parent_id = state.get("parent_node_id", "worker")
-    current_depth = state.get("depth", 0)
-    
-    print(f"🔧 [WorkerSubgraph] Executing task at depth {current_depth}: {task[:80]}...")
-    
-    # --- PRE-FLIGHT SAFETY CHECKS ---
-    
-    # 1. Check for global interrupt signal (Zombie Pruning)
-    if state.get("global_signal") == "INTERRUPT":
-        print(f"🛑 [WorkerSubgraph] Aborted due to global INTERRUPT signal.")
-        return {
-            "results": {parent_id: "[Aborted: Global interrupt signal]"},
-            "all_agents": [{
-                "id": parent_id,
-                "role": "Worker",
-                "status": "aborted",
-                "depth": current_depth,
-                "instruction": task,
-                "output": ""
-            }],
-            "all_edges": []
-        }
-    
-    # 2. Check depth limit
-    if current_depth >= MAX_RECURSION_DEPTH:
-        print(f"🛑 [WorkerSubgraph] Depth limit reached ({current_depth} >= {MAX_RECURSION_DEPTH})")
-        return {
-            "results": {parent_id: f"[Depth limit reached: {current_depth}]"},
-            "all_agents": [{
-                "id": parent_id,
-                "role": "Worker",
-                "status": "depth_limited",
-                "depth": current_depth,
-                "instruction": task,
-                "output": ""
-            }],
-            "all_edges": []
-        }
-    
-    # 3. Check budget
-    budget_config = state.get("budget_config") or {}
-    usage_stats = state.get("usage_stats") or {}
-    max_cost = budget_config.get("max_cost")
-    current_cost = usage_stats.get("cost", 0.0)
-    
-    if max_cost is not None and current_cost >= max_cost:
-        print(f"💰 [WorkerSubgraph] Budget limit reached: ${current_cost:.2f}")
-        return {
-            "results": {parent_id: f"[Budget limit reached: ${current_cost:.2f}]"},
-            "global_signal": "INTERRUPT",
-            "all_agents": [{
-                "id": parent_id,
-                "role": "Worker", 
-                "status": "budget_exceeded",
-                "depth": current_depth,
-                "instruction": task,
-                "output": ""
-            }],
-            "all_edges": []
-        }
-    
-    # --- EXECUTE THE TASK ---
-    start_time = time.time()
-    
-    # Add subject context to task
-    enriched_task = task
-    if subject:
-        enriched_task = f"<subject>{subject}</subject>\n\n<task>\n{task}\n</task>"
-    
-    # Execute using generic worker (determines agent type from task content)
-    worker_state = {
-        "depth": current_depth,
-        "subject": subject,
-        "budget_config": budget_config,
-        "usage_stats": usage_stats
-    }
-    
-    try:
-        result = await generic_worker_node(worker_state, enriched_task, "Researcher", config)
-        output = result.get("output", str(result))
-        execution_time = time.time() - start_time
-        
-        return {
-            "results": {parent_id: output},
-            "usage_stats": {"steps": 1},
-            "all_agents": [{
-                "id": parent_id,
-                "role": "SubWorker",
-                "status": "completed",
-                "depth": current_depth,
-                "instruction": task,
-                "output": output[:500],
-                "execution_time": execution_time
-            }],
-            "all_edges": []
-        }
-        
-    except Exception as e:
-        print(f"❌ [WorkerSubgraph] Execution error: {e}")
-        return {
-            "results": {parent_id: f"[Error: {str(e)}]"},
-            "all_agents": [{
-                "id": parent_id,
-                "role": "SubWorker",
-                "status": "error",
-                "depth": current_depth,
-                "instruction": task,
-                "output": str(e)
-            }],
-            "all_edges": []
-        }
-
-
-async def validate_node(state: WorkerState, config: RunnableConfig = None) -> Dict[str, Any]:
-    """
-    Validate the execution result using confidence evaluation.
-    """
-    parent_id = state.get("parent_node_id", "worker")
-    results = state.get("results", {})
-    task = state.get("task", "")
-    
-    output = results.get(parent_id, "")
-    
-    if not output or output.startswith("["):
-        return {"confidence_score": 0.0, "confidence_reasoning": "Skipped due to error"}
-    
-    print(f"🔍 [WorkerSubgraph] Validating output quality...")
-    
-    try:
-        evaluation = await evaluate_confidence(task, output, config)
-        return {
-            "confidence_score": evaluation.get("confidence_score", 0.5),
-            "confidence_reasoning": evaluation.get("reasoning", "")
-        }
-    except Exception as e:
-        print(f"⚠️ [WorkerSubgraph] Validation error: {e}")
-        return {"confidence_score": 0.5, "confidence_reasoning": f"Validation failed: {e}"}
-
-
-def build_worker_subgraph() -> StateGraph:
-    """
-    Build and return the compiled Worker Subgraph.
-    
-    Flow: execute → validate → END
-    """
-    graph = StateGraph(WorkerState)
-    
-    graph.add_node("execute", execute_node)
-    graph.add_node("validate", validate_node)
-    
-    graph.add_edge(START, "execute")
-    graph.add_edge("execute", "validate")
-    graph.add_edge("validate", END)
-    
-    return graph
-
-
-# Pre-compiled subgraph for reuse
-worker_subgraph = build_worker_subgraph().compile()
-```
+##### 1.2.3 Mini-Execution & Recursion (`execute_mini_plan`)
+Executes the mini-plan in parallel using `asyncio.gather`:
+- **Recursive Spawning**: For each child task, it runs `should_decompose`. If a child task is itself complex, it spawns a *new* `worker_subgraph` at `depth + 1`.
+- This enables multi-level hierarchical decomposition (Depth 0 → 1 → 2 → 3) while staying within the lightweight subgraph architecture.
+- Aggregates results, usage stats, and agent visualization data for the parent graph.
 
 #### 1.3 Create Package Init (`backend/agents/subgraphs/__init__.py`)
 
@@ -340,15 +169,35 @@ __all__ = ["worker_subgraph", "build_worker_subgraph", "WorkerState"]
 
 #### 2.1 Modify `graph_compiler.py`
 
-Replace the `_recursive_node_fn` that calls `app_graph.ainvoke()` with native subgraph invocation. Add import at the top:
+Modified the `_recursive_node_fn` to invoke the native subgraph:
 
 ```python
-from agents.subgraphs import worker_subgraph, WorkerState
+# In graph_compiler.py
+from agents.subgraphs import worker_subgraph
+
+async def _recursive_node_fn(state: AgentState, config: RunnableConfig):
+    # Prepare WorkerState from AgentState
+    worker_input = {
+        "task": node_task,
+        "subject": state.get("subject", ""),
+        "parent_node_id": node_id,
+        "depth": state.get("depth", 0) + 1,
+        "global_signal": state.get("global_signal"),
+        "usage_stats": state.get("usage_stats", {}),
+        "budget_config": state.get("budget_config", {}),
+    }
+    
+    # Invoke native subgraph
+    result = await worker_subgraph.ainvoke(worker_input, config)
+    
+    # Return updates to AgentState
+    return {
+        "results": result.get("results", {}),
+        "usage_stats": result.get("usage_stats", {}),
+        "all_agents": result.get("all_agents", []),
+        "all_edges": result.get("all_edges", []),
+    }
 ```
-
-Replace the `_recursive_node_fn` definition to use the native subgraph instead of `app_graph.ainvoke()`.
-
----
 
 ### Phase 3: Clean Up Legacy Code
 
