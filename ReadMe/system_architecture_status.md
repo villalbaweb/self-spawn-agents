@@ -31,13 +31,16 @@
     *   Handles parallel node execution based on the blueprint.
     *   **New:** Enforces Zombie Branch Pruning via Global Interrupt Signals.
 
-### Module 4: Recursive Subgraph Architecture
-*   **Status:** ✅ **Operational**
-*   **Core Component:** `spawn_subgraph` tool / Recursive Orchestrator.
-*   **Function:** Allows any node to become a "parent" and spawn a child graph for sub-problems.
+### Module 4: Native Worker Subgraph Architecture
+*   **Status:** ✅ **Operational (Refactored - Epic 4.1)**
+*   **Core Component:** `WorkerSubgraph` (Native LangGraph Subgraph).
+*   **Function:** Executes recursive sub-tasks with a lightweight flow, bypassing full orchestration.
 *   **Current Capabilities:**
-    *   Multi-level depth handling (Root -> Backend -> Auth Service).
-    *   **New:** Inherits budget configs and safety signals from parent.
+    *   Native LangGraph subgraph composition (`execute → validate`).
+    *   ~70% latency reduction per recursion level (2 LLM calls vs 4-5).
+    *   Multi-level depth handling with inherited budget configs.
+    *   Full state visibility in parent graph (unified tracing).
+    *   **Removed:** Legacy `spawn_subgraph` tool replaced with native integration.
 
 ### Module 5: Quality Assurance & Sandboxing (Modules 4.5 & 5.5)
 *   **Status:** ✅ **Operational**

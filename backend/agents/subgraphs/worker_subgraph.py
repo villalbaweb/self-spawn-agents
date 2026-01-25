@@ -1,0 +1,570 @@
+"""
+Native LangGraph Worker Subgraph (Epic 4.1).
+
+Lightweight execution subgraph for recursive nodes that SKIPS:
+- semantic_splitter (task already scoped by parent supervisor)
+- supervisor (no need for full graph planning)
+- synthesizer (results returned directly)
+
+Flow: 
+  START → execute → validate → END
+
+For complex tasks, uses a lightweight mini-planner that creates
+parallel workers without the full orchestration overhead.
+
+Cost Comparison:
+  Full app_graph: 5-8 LLM calls (splitter + supervisor + workers + synthesizer)
+  Worker subgraph: 2-5 LLM calls (complexity check + mini-plan + workers)
+
+Benefits:
+- ~60% reduction in LLM calls per recursion level
+- Native state visibility in parent graph
+- Parallel execution of sub-tasks
+- No redundant decomposition of already-scoped tasks
+"""
+from typing import Dict, Any, List
+from langgraph.graph import StateGraph, START, END
+from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import SystemMessage, HumanMessage
+from pydantic import BaseModel, Field
+
+from agents.subgraphs.state import WorkerState
+from agents.workers.generic import generic_worker_node
+from agents.evaluate_confidence import evaluate_confidence
+from agents.dependencies import MAX_RECURSION_DEPTH, llm_mini
+import asyncio
+import time
+import json
+import re
+
+
+# --- LAZY SUBGRAPH REFERENCE (for recursive spawning) ---
+_compiled_subgraph = None
+
+def _get_compiled_subgraph():
+    """
+    Lazy getter for the compiled subgraph.
+    Avoids circular reference at module load time.
+    Called at runtime when recursion is needed.
+    """
+    global _compiled_subgraph
+    if _compiled_subgraph is None:
+        # This will be set after module loads (see bottom of file)
+        pass
+    return _compiled_subgraph
+
+
+# --- LIGHTWEIGHT MINI-PLANNER ---
+
+class MiniTask(BaseModel):
+    """A single task in the mini execution plan."""
+    id: str = Field(..., description="Unique task ID (e.g., 'research_oauth')")
+    agent_type: str = Field(..., description="Agent type: Researcher, Coder, or Reviewer")
+    instruction: str = Field(..., description="Specific instruction for this task")
+
+
+class MiniPlan(BaseModel):
+    """Lightweight execution plan - no dependencies, all parallel."""
+    tasks: List[MiniTask] = Field(..., description="List of 2-4 parallel tasks")
+    reasoning: str = Field(..., description="Brief explanation of the plan")
+
+
+async def create_mini_plan(task: str, subject: str, config: RunnableConfig = None) -> MiniPlan:
+    """
+    Lightweight planner that creates 2-4 parallel tasks.
+    Much simpler than full supervisor - no dependencies, no recursive flags.
+    """
+    plan_prompt = f"""You are a lightweight task planner. Break this task into 2-4 PARALLEL sub-tasks.
+
+<subject>{subject}</subject>
+<task>{task}</task>
+
+RULES:
+- Maximum 4 sub-tasks (prefer 2-3)
+- All tasks run in PARALLEL (no dependencies)
+- Each task should be completable by a single agent
+- Agent types: Researcher (search/research), Coder (code/implementation), Reviewer (review/test)
+- Keep instructions focused and specific
+
+Output a JSON object with "tasks" array and "reasoning" string."""
+
+    try:
+        messages = [
+            SystemMessage(content="You are a lightweight task planner. Output valid JSON only."),
+            HumanMessage(content=plan_prompt)
+        ]
+        
+        structured_llm = llm_mini.with_structured_output(MiniPlan)
+        plan = await structured_llm.ainvoke(messages, config=config) if config else await structured_llm.ainvoke(messages)
+        return plan
+        
+    except Exception as e:
+        print(f"⚠️ [MiniPlanner] Failed to create plan: {e}")
+        # Fallback: single research task
+        return MiniPlan(
+            tasks=[MiniTask(id="fallback_research", agent_type="Researcher", instruction=task)],
+            reasoning=f"Fallback due to planning error: {e}"
+        )
+
+
+async def execute_mini_plan(
+    plan: MiniPlan, 
+    state: WorkerState, 
+    config: RunnableConfig = None,
+    subgraph_ref = None  # Lazy reference to avoid circular import
+) -> Dict[str, Any]:
+    """
+    Execute all tasks in the mini-plan in parallel.
+    
+    RECURSIVE CAPABILITY:
+    If a mini-task is itself complex (exceeds complexity threshold),
+    it spawns a NEW worker_subgraph at depth+1 instead of direct execution.
+    This enables multi-level decomposition without full app_graph overhead.
+    
+    Returns aggregated results and agent data.
+    """
+    parent_id = state.get("parent_node_id", "worker")
+    current_depth = state.get("depth", 0)
+    next_depth = current_depth + 1
+    subject = state.get("subject", "")
+    budget_config = state.get("budget_config") or {}
+    usage_stats = state.get("usage_stats") or {}
+    
+    print(f"🔀 [MiniOrchestrator] Executing {len(plan.tasks)} parallel tasks at depth {current_depth}...")
+    
+    async def run_single_task(mini_task: MiniTask) -> Dict[str, Any]:
+        """
+        Execute a single mini-task.
+        
+        If task is complex AND we haven't hit depth limit, spawn a new 
+        worker_subgraph recursively. Otherwise, execute directly.
+        """
+        task_id = f"{parent_id}_{mini_task.id}"
+        
+        # Enrich with subject context
+        enriched_instruction = mini_task.instruction
+        if subject:
+            enriched_instruction = f"<subject>{subject}</subject>\n\n<task>\n{mini_task.instruction}\n</task>"
+        
+        try:
+            start_time = time.time()
+            
+            # Check if this child task needs its own subgraph
+            can_recurse = next_depth < MAX_RECURSION_DEPTH and subgraph_ref is not None
+            needs_sub_decomposition = False
+            
+            if can_recurse:
+                needs_sub_decomposition = await should_decompose(mini_task.instruction, config)
+            
+            if needs_sub_decomposition:
+                # --- RECURSIVE PATH: Spawn child worker_subgraph ---
+                print(f"   ↳ [MiniTask {mini_task.id}] Complex, spawning child subgraph at depth {next_depth}")
+                
+                child_state = {
+                    "task": mini_task.instruction,
+                    "subject": subject,
+                    "parent_node_id": task_id,
+                    "depth": next_depth,
+                    "results": {},
+                    "all_agents": [],
+                    "all_edges": [],
+                    "global_signal": state.get("global_signal"),
+                    "usage_stats": usage_stats,
+                    "budget_config": budget_config,
+                }
+                
+                sub_result = await subgraph_ref.ainvoke(child_state, config)
+                execution_time = time.time() - start_time
+                
+                # Extract output from nested results
+                child_results = sub_result.get("results", {})
+                output = child_results.get(task_id, str(child_results))
+                child_agents = sub_result.get("all_agents", [])
+                child_edges = sub_result.get("all_edges", [])
+                
+                return {
+                    "task_id": mini_task.id,
+                    "output": output,
+                    "agent_data": {
+                        "id": task_id,
+                        "role": f"{mini_task.agent_type} (subgraph)",
+                        "status": "completed",
+                        "depth": current_depth,
+                        "instruction": mini_task.instruction,
+                        "output": output[:500] if len(output) > 500 else output,
+                        "execution_time_seconds": round(execution_time, 2),
+                        "spawned_children": len(child_agents),
+                        "orchestration_mode": "recursive"
+                    },
+                    "child_agents": child_agents,
+                    "child_edges": child_edges,
+                    "error": None
+                }
+            
+            else:
+                # --- DIRECT PATH: Single worker execution ---
+                worker_state = {
+                    "depth": current_depth,
+                    "subject": subject,
+                    "budget_config": budget_config,
+                    "usage_stats": usage_stats
+                }
+                
+                result = await generic_worker_node(
+                    worker_state, 
+                    enriched_instruction, 
+                    mini_task.agent_type, 
+                    config
+                )
+                execution_time = time.time() - start_time
+                
+                output = result.get("output", "")
+                meta = result.get("metadata", {})
+                
+                return {
+                    "task_id": mini_task.id,
+                    "output": output,
+                    "agent_data": {
+                        "id": task_id,
+                        "role": mini_task.agent_type,
+                        "status": meta.get("status", "completed"),
+                        "depth": current_depth,
+                        "instruction": mini_task.instruction,
+                        "output": output[:500] if len(output) > 500 else output,
+                        "execution_time_seconds": round(execution_time, 2),
+                        "tool_used": meta.get("tool_used"),
+                        "confidence_score": meta.get("confidence_score", 0.5),
+                        "orchestration_mode": "direct"
+                    },
+                    "child_agents": [],
+                    "child_edges": [],
+                    "error": None
+                }
+                
+        except Exception as e:
+            return {
+                "task_id": mini_task.id,
+                "output": f"[Error: {str(e)}]",
+                "agent_data": {
+                    "id": task_id,
+                    "role": mini_task.agent_type,
+                    "status": "error",
+                    "depth": current_depth,
+                    "instruction": mini_task.instruction,
+                    "output": str(e)
+                },
+                "child_agents": [],
+                "child_edges": [],
+                "error": str(e)
+            }
+    
+    # Execute all tasks in parallel
+    results = await asyncio.gather(*[run_single_task(t) for t in plan.tasks])
+    
+    # Aggregate results (including recursive child results)
+    all_outputs = {}
+    all_agents = []
+    all_edges = []
+    
+    for r in results:
+        all_outputs[r["task_id"]] = r["output"]
+        all_agents.append(r["agent_data"])
+        
+        # Include child agents/edges from recursive spawns
+        all_agents.extend(r.get("child_agents", []))
+        all_edges.extend(r.get("child_edges", []))
+        
+        # Create edge from parent to each child
+        all_edges.append({
+            "source": parent_id,
+            "target": r["agent_data"]["id"],
+            "depth": current_depth,
+            "type": "hierarchy"
+        })
+    
+    # Combine outputs into summary
+    combined_output = "\n\n---\n\n".join([
+        f"**{task_id}**:\n{output}" 
+        for task_id, output in all_outputs.items()
+    ])
+    
+    return {
+        "output": combined_output,
+        "all_agents": all_agents,
+        "all_edges": all_edges,
+        "usage_stats": {"steps": len(plan.tasks)}
+    }
+
+
+# --- COMPLEXITY ANALYSIS ---
+
+async def should_decompose(task: str, config: RunnableConfig = None) -> bool:
+    """
+    Quick check if task needs decomposition into sub-tasks.
+    Uses heuristics first, then LLM if uncertain.
+    """
+    task_lower = task.lower()
+    
+    # Heuristic 1: Short tasks are usually simple
+    if len(task) < 150:
+        return False
+    
+    # Heuristic 2: Explicit multi-part indicators
+    multi_part_indicators = [
+        " and ", " with ", "multiple", "several", "various",
+        "step 1", "step 2", "first,", "then,", "finally,",
+        "oauth", "jwt", "rbac",  # Auth complexity markers
+        "frontend", "backend", "database", "api"
+    ]
+    matches = sum(1 for indicator in multi_part_indicators if indicator in task_lower)
+    
+    if matches >= 3:
+        return True
+    if matches == 0:
+        return False
+    
+    # Uncertain - use quick LLM check
+    try:
+        check_prompt = f"""Does this task need to be broken into 2+ parallel sub-tasks, or can ONE agent handle it?
+
+Task: {task[:500]}
+
+Reply with ONLY "DECOMPOSE" or "SINGLE"."""
+        
+        messages = [
+            SystemMessage(content="You classify task complexity. One word answer only."),
+            HumanMessage(content=check_prompt)
+        ]
+        response = await llm_mini.ainvoke(messages, config=config) if config else await llm_mini.ainvoke(messages)
+        return "DECOMPOSE" in response.content.upper()
+        
+    except Exception:
+        return False  # Default to simple on error
+
+
+# --- MAIN EXECUTION NODE ---
+
+async def execute_node(state: WorkerState, config: RunnableConfig = None) -> Dict[str, Any]:
+    """
+    Smart execution node with lightweight orchestration.
+    
+    For simple tasks: Direct execution (1 LLM call)
+    For complex tasks: Mini-plan + parallel execution (2-5 LLM calls)
+    
+    This is MUCH cheaper than full app_graph which costs 5-8 LLM calls.
+    """
+    task = state.get("task", "")
+    subject = state.get("subject", "")
+    parent_id = state.get("parent_node_id", "worker")
+    current_depth = state.get("depth", 0)
+    
+    print(f"🔧 [WorkerSubgraph] Processing at depth {current_depth}: {task[:80]}...")
+    
+    # --- PRE-FLIGHT SAFETY CHECKS ---
+    
+    # 1. Global interrupt signal (Zombie Pruning)
+    if state.get("global_signal") == "INTERRUPT":
+        print(f"🛑 [WorkerSubgraph] Aborted due to global INTERRUPT signal.")
+        return {
+            "results": {parent_id: "[Aborted: Global interrupt signal]"},
+            "all_agents": [{
+                "id": parent_id,
+                "role": "SubWorker",
+                "status": "aborted",
+                "depth": current_depth,
+                "instruction": task,
+                "output": ""
+            }],
+            "all_edges": []
+        }
+    
+    # 2. Depth limit
+    if current_depth >= MAX_RECURSION_DEPTH:
+        print(f"🛑 [WorkerSubgraph] Depth limit reached ({current_depth} >= {MAX_RECURSION_DEPTH})")
+        return {
+            "results": {parent_id: f"[Depth limit reached: {current_depth}]"},
+            "all_agents": [{
+                "id": parent_id,
+                "role": "SubWorker",
+                "status": "depth_limited",
+                "depth": current_depth,
+                "instruction": task,
+                "output": ""
+            }],
+            "all_edges": []
+        }
+    
+    # 3. Budget check
+    budget_config = state.get("budget_config") or {}
+    usage_stats = state.get("usage_stats") or {}
+    max_cost = budget_config.get("max_cost")
+    current_cost = usage_stats.get("cost", 0.0)
+    
+    if max_cost is not None and current_cost >= max_cost:
+        print(f"💰 [WorkerSubgraph] Budget limit reached: ${current_cost:.2f}")
+        return {
+            "results": {parent_id: f"[Budget limit reached: ${current_cost:.2f}]"},
+            "global_signal": "INTERRUPT",
+            "all_agents": [{
+                "id": parent_id,
+                "role": "SubWorker",
+                "status": "budget_exceeded",
+                "depth": current_depth,
+                "instruction": task,
+                "output": ""
+            }],
+            "all_edges": []
+        }
+    
+    # --- DECIDE EXECUTION PATH ---
+    start_time = time.time()
+    needs_decomposition = await should_decompose(task, config)
+    
+    if needs_decomposition and current_depth < MAX_RECURSION_DEPTH - 1:
+        # --- PATH A: MINI-ORCHESTRATION ---
+        print(f"🔀 [WorkerSubgraph] Complex task detected, creating mini-plan...")
+        
+        plan = await create_mini_plan(task, subject, config)
+        print(f"📋 [WorkerSubgraph] Plan: {len(plan.tasks)} tasks - {plan.reasoning[:50]}")
+        
+        # Pass self-reference for recursive spawning capability
+        # worker_subgraph is defined at module level, available after compilation
+        result = await execute_mini_plan(plan, state, config, subgraph_ref=_get_compiled_subgraph())
+        execution_time = time.time() - start_time
+        
+        # Create orchestrator agent record
+        orchestrator_agent = {
+            "id": parent_id,
+            "role": "MiniOrchestrator",
+            "status": "completed",
+            "depth": current_depth,
+            "instruction": task,
+            "output": f"Orchestrated {len(plan.tasks)} sub-tasks",
+            "execution_time_seconds": round(execution_time, 2),
+            "orchestration_mode": "mini"
+        }
+        
+        return {
+            "results": {parent_id: result["output"]},
+            "usage_stats": result["usage_stats"],
+            "all_agents": [orchestrator_agent] + result["all_agents"],
+            "all_edges": result["all_edges"]
+        }
+    
+    else:
+        # --- PATH B: DIRECT EXECUTION ---
+        print(f"⚡ [WorkerSubgraph] Simple task, direct execution...")
+        
+        enriched_task = task
+        if subject:
+            enriched_task = f"<subject>{subject}</subject>\n\n<task>\n{task}\n</task>"
+        
+        worker_state = {
+            "depth": current_depth,
+            "subject": subject,
+            "budget_config": budget_config,
+            "usage_stats": usage_stats
+        }
+        
+        try:
+            result = await generic_worker_node(worker_state, enriched_task, "Researcher", config)
+            output = result.get("output", str(result))
+            meta = result.get("metadata", {})
+            execution_time = time.time() - start_time
+            
+            agent_data = {
+                "id": parent_id,
+                "role": "SubWorker",
+                "status": meta.get("status", "completed"),
+                "depth": current_depth,
+                "instruction": task,
+                "output": output[:500] if len(output) > 500 else output,
+                "execution_time_seconds": round(execution_time, 2),
+                "tool_used": meta.get("tool_used"),
+                "confidence_score": meta.get("confidence_score", 0.5),
+                "orchestration_mode": "direct"
+            }
+            
+            return {
+                "results": {parent_id: output},
+                "usage_stats": {"steps": 1, "cost": meta.get("estimated_cost", 0.01)},
+                "all_agents": [agent_data],
+                "all_edges": []
+            }
+            
+        except Exception as e:
+            print(f"❌ [WorkerSubgraph] Execution error: {e}")
+            return {
+                "results": {parent_id: f"[Error: {str(e)}]"},
+                "all_agents": [{
+                    "id": parent_id,
+                    "role": "SubWorker",
+                    "status": "error",
+                    "depth": current_depth,
+                    "instruction": task,
+                    "output": str(e)
+                }],
+                "all_edges": []
+            }
+
+
+async def validate_node(state: WorkerState, config: RunnableConfig = None) -> Dict[str, Any]:
+    """
+    Validate the execution result using confidence evaluation.
+    """
+    parent_id = state.get("parent_node_id", "worker")
+    results = state.get("results", {})
+    task = state.get("task", "")
+    
+    output = results.get(parent_id, "")
+    
+    # Skip validation for error/abort states
+    if not output or output.startswith("["):
+        return {"confidence_score": 0.0, "confidence_reasoning": "Skipped: execution failed or aborted"}
+    
+    print(f"🔍 [WorkerSubgraph] Validating output quality...")
+    
+    try:
+        evaluation = await evaluate_confidence(task, output, config)
+        return {
+            "confidence_score": evaluation.get("confidence_score", 0.5),
+            "confidence_reasoning": evaluation.get("confidence_reasoning", "")
+        }
+    except Exception as e:
+        print(f"⚠️ [WorkerSubgraph] Validation error: {e}")
+        return {"confidence_score": 0.5, "confidence_reasoning": f"Validation failed: {e}"}
+
+
+# --- BUILD THE SUBGRAPH ---
+
+def build_worker_subgraph() -> StateGraph:
+    """
+    Build the Worker Subgraph.
+    
+    Flow: START → execute → validate → END
+    
+    The execute node handles both simple and complex tasks internally,
+    using mini-orchestration when needed instead of full app_graph.
+    
+    RECURSIVE SPAWNING:
+    When execute_node creates a mini-plan, each child task can itself
+    spawn a new worker_subgraph if it's complex enough. This is enabled
+    by passing `_get_compiled_subgraph()` to `execute_mini_plan()`.
+    """
+    graph = StateGraph(WorkerState)
+    
+    graph.add_node("execute", execute_node)
+    graph.add_node("validate", validate_node)
+    
+    graph.add_edge(START, "execute")
+    graph.add_edge("execute", "validate")
+    graph.add_edge("validate", END)
+    
+    return graph
+
+
+# Pre-compiled subgraph for reuse
+worker_subgraph = build_worker_subgraph().compile()
+
+# Register the compiled subgraph for recursive spawning
+_compiled_subgraph = worker_subgraph

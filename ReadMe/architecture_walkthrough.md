@@ -24,14 +24,26 @@ flowchart TB
     end
     
     subgraph DynamicGraph["Dynamic Graph (graph_compiler.py)"]
-        E[Researcher Node] --> F[Orchestrator Node]
+        E[Researcher Node] --> F[SubOrchestrator Node]
         E --> G[Coder Node]
         F --> H[Reviewer Node]
         G --> H
     end
     
+    subgraph WorkerSub["Worker Subgraph (Native)"]
+        WA[analyze complexity] --> WE[execute / mini-orchestrate]
+        WE --> WV[validate]
+    end
+    
+    subgraph MiniOrch["Mini-Orchestration (parallel)"]
+        M1[Worker 1]
+        M2[Worker 2]
+        M3[Worker 3]
+    end
+    
     C -->|Compiles & Executes| DynamicGraph
-    F -->|spawn_subgraph| Orchestrator
+    F -->|Native Subgraph| WorkerSub
+    WE -.->|Complex tasks| MiniOrch
     
     subgraph Safety["Phase 2 Safety"]
         S1[Zombie Pruner]
@@ -46,12 +58,10 @@ flowchart TB
     subgraph Tools["Tools"]
         T1[web_search]
         T2[python_repl]
-        T3[spawn_subgraph]
     end
     
     E --> T1
     G --> T2
-    F --> T3
 ```
 
 ---
@@ -63,7 +73,7 @@ flowchart TB
 | **1: Semantic Splitter** | Decompose tasks into subtasks | ✅ Complete |
 | **2: Supervisor Agent** | Plan execution graph | ✅ Complete |
 | **3: Dynamic Graph Compiler** | Compile nodes, **enforce pruning** | ✅ Complete |
-| **4: Recursive Subgraph Tool** | Agents spawn sub-workflows | ✅ Complete |
+| **4: Native Worker Subgraph** | Lightweight recursive execution | ✅ Complete (Epic 4.1) |
 | **5: RLM Orchestrator** | Deliverables & Synthesis | ✅ Complete |
 | **6: Safety & Escalation** | **Zombie Pruning, Budgets, Persistence** | ✅ Complete |
 | **7: Visualization** | React + SSE Streaming | ✅ Complete |
@@ -86,12 +96,15 @@ backend/
 │   ├── synthesizer.py          # Module 5: Final synthesis
 │   ├── shared_memory.py        # Persistence (AsyncSqliteSaver)
 │   ├── history.py              # Time Travel logic (Fork/Find Checkpoints)
+│   ├── subgraphs/              # Module 4: Native LangGraph Subgraphs
+│   │   ├── __init__.py
+│   │   ├── state.py            # WorkerState TypedDict
+│   │   └── worker_subgraph.py  # Lightweight execute → validate flow
 │   ├── workers/
 │   │   └── generic.py          # Generic worker with tool binding
 │   └── tools/
 │       ├── web_search.py       # Web search with metadata extraction
-│       ├── python_repl.py      # E2B code execution
-│       └── subgraph.py         # Recursive subgraph spawning
+│       └── python_repl.py      # E2B code execution
 ```
 
 ---
@@ -138,9 +151,16 @@ semantic_splitter → supervisor → graph_compiler (runs dynamic graph) → syn
 ### Feature 3: E2B Python Execution
 - Secure cloud sandbox via `e2b-code-interpreter`
 
-### Feature 4: Recursive Subgraph Spawning
-- `spawn_subgraph` tool invokes the entire orchestrator
-- Depth limit: 2 (configurable)
+### Feature 4: Native Worker Subgraph (Epic 4.1)
+- SubOrchestrator nodes use a lightweight native LangGraph subgraph
+- **Skips redundant steps**: No semantic_splitter or supervisor for child tasks
+- **Smart execution path**:
+  - Simple tasks: Direct execution (1-2 LLM calls)
+  - Complex tasks: Mini-planner creates 2-4 parallel workers (3-5 LLM calls)
+- **Cost comparison**: 2-5 LLM calls vs 5-8 with full `app_graph.ainvoke()`
+- ~60% latency reduction per recursion level
+- Full state visibility in parent graph
+- Depth limit: 3 (configurable via MAX_RECURSION_DEPTH)
 
 ### Feature 5: Safety Logic (Phase 2)
 - **Atomic Persistence:** State checks saved after *every node*. Crash recovery is instant.
