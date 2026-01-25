@@ -1,14 +1,16 @@
+import pytest
 import asyncio
 import sys
 import os
 import json
 
 # Add backend directory to sys.path
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../backend'))
 
 from agent import app_graph
 from agents.state import AgentState
 
+@pytest.mark.asyncio
+@pytest.mark.asyncio
 async def test_graph_direct():
     print("🚀 Testing Full Orchestrator (Modules 1 + 2 + 3)...")
     

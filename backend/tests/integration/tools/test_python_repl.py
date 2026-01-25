@@ -1,12 +1,14 @@
+import pytest
 import asyncio
 import sys
 import os
 
 # Add backend directory to sys.path
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../backend'))
 
 from agents.tools.python_repl import python_repl
 
+@pytest.mark.asyncio
+@pytest.mark.asyncio
 async def test_python_repl():
     print("🚀 Testing E2B Python REPL Tool...")
     

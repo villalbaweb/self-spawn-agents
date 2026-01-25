@@ -84,6 +84,8 @@ body {
 
 .task-input {
   flex: 1;
+  min-width: 300px;
+  /* Prevent crushing */
   background: #1e272e;
   border: 1px solid #485460;
   color: #fff;
@@ -117,6 +119,46 @@ body {
   cursor: not-allowed;
 }
 
+.header-fork-btn {
+  background: transparent;
+  border: 1px solid #e1b12c;
+  color: #e1b12c;
+  padding: 0 16px;
+  height: 40px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.header-fork-btn:hover {
+  background: rgba(225, 177, 44, 0.1);
+}
+
+.synthesis-btn {
+  background: #3c40c6;
+  border: none;
+  color: white;
+  padding: 0 16px;
+  height: 40px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.synthesis-btn:hover {
+  background: #575fcf;
+}
+
 .error-banner {
   background: #ff5e57;
   color: white;
@@ -125,18 +167,97 @@ body {
 }
 
 .main-content {
+  position: relative;
+  /* Anchor for absolute children */
   display: flex;
   flex: 1;
   overflow: hidden;
 }
 
 .logs-pane {
-  width: 280px;
-  min-width: 280px;
-  background-color: #1e1e24;
+  position: absolute;
+  /* Overlay */
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background-color: rgba(30, 30, 36, 0.95);
+  /* Slight transparency like history */
+  backdrop-filter: blur(12px);
   border-right: 1px solid #333;
   display: flex;
   flex-direction: column;
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transform: translateX(-100%);
+  /* start closed/off-screen? No, logs logic was width-based. */
+  /* Let's switch to transform-based like history for better performance? 
+     The current logs logic uses width toggling. 
+     If the user wants it EXACTLY like history, history uses transform: translateX(-100%) -> 0.
+     The Logs implementation currently uses width: 0 -> 280px.
+     
+     If I keep width-based but absolute, it will work visually as an overlay.
+     However, width=0 is effectively "closed".
+     Let's stick to width transition for now to minimize code changes, just changing position to absolute.
+  */
+  width: 280px;
+  /* Default open width */
+  z-index: 8000;
+  /* High but below History (9000) */
+  box-shadow: 5px 0 20px rgba(0, 0, 0, 0.3);
+}
+
+.logs-pane.open {
+  transform: translateX(0);
+}
+
+.logs-pane.closed {
+  transform: translateX(-100%);
+  border-right: none;
+}
+
+
+
+.logs-toggle {
+  position: absolute;
+  right: -24px;
+  top: 16px;
+  width: 24px;
+  height: 60px;
+  background: #1e1e24;
+  /* Match bg */
+  border: 1px solid #333;
+  border-left: none;
+  border-radius: 0 6px 6px 0;
+  color: #a4b0be;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  writing-mode: vertical-lr;
+  text-orientation: mixed;
+  padding: 8px 0;
+  z-index: 11;
+  transition: all 0.2s;
+}
+
+.logs-toggle:hover {
+  background: #3c40c6;
+  color: #fff;
+}
+
+.logs-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 280px;
+  /* Fixed width content to avoid squishing during transition */
+  overflow: hidden;
+}
+
+.logs-pane.closed .logs-content {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .logs-pane h3 {
@@ -157,6 +278,7 @@ body {
   font-family: 'Consolas', 'Monaco', monospace;
   font-size: 11px;
   color: #dfe4ea;
+  width: 100%;
 }
 
 .log-line {
@@ -587,14 +709,16 @@ body {
 }
 
 /* History Sidebar */
+
+/* Modern History Sidebar */
 .history-sidebar {
   position: absolute;
-  top: 60px; /* Below header */
+  top: 60px;
+  /* Below header */
   left: 0;
   bottom: 0;
   z-index: 9000;
-  transition: transform 0.3s ease;
-  pointer-events: none; /* Let clicks pass when closed */
+  pointer-events: none;
 }
 
 .history-sidebar.open {
@@ -603,102 +727,259 @@ body {
 
 .history-toggle {
   position: absolute;
-  left: 0;
-  top: 10px;
+  right: -24px;
+  top: 90px;
   width: 24px;
-  height: 48px;
-  background: #2f3640;
-  border: 1px solid #485460;
+  height: 60px;
+  background: #1e1e24;
+  border: 1px solid #333;
   border-left: none;
   border-radius: 0 6px 6px 0;
-  color: #fff;
+  color: #a4b0be;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   pointer-events: auto;
   z-index: 9001;
+  font-size: 11px;
+  font-weight: 600;
+  box-shadow: 2px 0 10px rgba(0, 0, 0, 0.2);
+  writing-mode: vertical-lr;
+  text-orientation: mixed;
+  padding: 8px 0;
+  transition: all 0.2s ease;
+}
+
+
+
+.history-toggle:hover {
+  background: #3c40c6;
+  color: white;
+  width: 28px;
 }
 
 .history-content {
-  width: 280px;
+  width: 320px;
+  /* Wider for better titles */
   height: 100%;
-  background: #2f3640;
-  box-shadow: 2px 0 10px rgba(0,0,0,0.3);
+  background: rgba(30, 39, 46, 0.95);
+  backdrop-filter: blur(12px);
+  box-shadow: 5px 0 20px rgba(0, 0, 0, 0.5);
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #485460;
+  border-right: 1px solid rgba(255, 255, 255, 0.05);
+  transform: translateX(-100%);
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.history-content h3 {
-  padding: 15px;
+.history-sidebar.open .history-content {
+  transform: translateX(0);
+}
+
+.history-header {
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.history-header h3 {
   margin: 0;
   font-size: 14px;
-  border-bottom: 1px solid #485460;
-  color: #a4b0be;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: 0.5px;
 }
 
 .refresh-btn {
-  background: transparent;
+  background: rgba(255, 255, 255, 0.05);
   border: none;
-  color: #0be881;
-  padding: 10px;
+  color: #a4b0be;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
   cursor: pointer;
-  text-align: right;
-  font-size: 11px;
-  border-bottom: 1px solid #333;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+
+.refresh-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
 }
 
 .run-list {
   flex: 1;
   overflow-y: auto;
-  padding: 10px;
+  padding: 15px;
+}
+
+.empty-state-text {
+  text-align: center;
+  color: #636e72;
+  font-size: 12px;
+  font-style: italic;
+  margin-top: 40px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.status-dot.completed {
+  background-color: #0be881;
+  box-shadow: 0 0 5px rgba(11, 232, 129, 0.4);
+}
+
+.status-dot.failed {
+  background-color: #ff5e57;
+  box-shadow: 0 0 5px rgba(255, 94, 87, 0.4);
+}
+
+.status-dot.active {
+  background-color: #3c40c6;
+  animation: pulse-dot 2s infinite;
+}
+
+.status-dot.unknown {
+  background-color: #808e9b;
+}
+
+@keyframes pulse-dot {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.5;
+    transform: scale(0.9);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.loading-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-top-color: #0be881;
+  border-radius: 50%;
+  animation: spinner 0.8s linear infinite;
+  margin: 40px auto;
+}
+
+@keyframes spinner {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .run-item {
-  background: #1e272e;
-  padding: 10px;
-  border-radius: 6px;
-  margin-bottom: 8px;
-  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 12px;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.run-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  transform: translateY(-1px);
 }
 
 .run-item.active {
-  border-color: #0be881;
+  background: rgba(11, 232, 129, 0.05);
+  border-color: rgba(11, 232, 129, 0.4);
 }
 
-.run-header {
-  display: flex;
-  justify-content: space-between;
+.run-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: #0be881;
+}
+
+.run-info {
   margin-bottom: 8px;
 }
 
-.run-id {
-  font-family: monospace;
-  font-size: 11px;
-  color: #fff;
+.run-title {
+  display: block;
+  /* Flex can be weird with wrapping text sometimes */
+  font-size: 13px;
+  line-height: 1.4;
+  min-height: 20px;
+  height: auto;
+  font-weight: 500;
+  color: #f1f2f6;
+  margin-bottom: 2px;
+  white-space: normal;
+  /* Allow wrapping */
+  overflow: visible;
+  /* Show everything */
+  padding: 2px 0;
+  word-break: break-word;
 }
 
-.run-date {
+.run-meta {
+  display: flex;
+  justify-content: space-between;
   font-size: 10px;
+  color: #747d8c;
+}
+
+.run-id {
+  font-family: 'Consolas', monospace;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 2px 4px;
+  border-radius: 3px;
   color: #a4b0be;
 }
 
 .run-actions {
   display: flex;
   justify-content: flex-end;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: 8px;
+  margin-top: 8px;
 }
 
 .fork-btn {
-  background: #3c40c6;
-  color: white;
-  border: none;
-  padding: 4px 8px;
+  background: transparent;
+  width: 100%;
+  color: #a4b0be;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 6px;
   border-radius: 4px;
-  font-size: 10px;
+  font-size: 11px;
+  font-weight: 600;
   cursor: pointer;
+  transition: all 0.2s;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .fork-btn:hover {
-  background: #575fcf;
+  background: #3c40c6;
+  color: white;
+  border-color: #3c40c6;
 }

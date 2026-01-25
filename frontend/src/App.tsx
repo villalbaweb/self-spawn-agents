@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
 import CytoscapeComponent from 'react-cytoscapejs';
 import cytoscape from 'cytoscape';
-import dagre from 'cytoscape-dagre';
+import fcose from 'cytoscape-fcose';
 import { HistorySidebar } from './HistorySidebar';
 import './App.css';
 
-// Register dagre layout
-cytoscape.use(dagre);
+// Register fcose layout
+cytoscape.use(fcose);
 
 interface AgentInfo {
   id: string;
@@ -25,6 +25,9 @@ interface AgentInfo {
   // Confidence (HITL)
   confidence_score?: number;
   confidence_reasoning?: string;
+  // Tier 2 Warnings
+  warning?: string;
+  low_confidence_flag?: boolean;
 }
 
 interface EdgeInfo {
@@ -57,6 +60,9 @@ function App() {
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [editInstruction, setEditInstruction] = useState<string>('');
 
+  // UI State
+  const [isLogsOpen, setIsLogsOpen] = useState<boolean>(true);
+
   // Ref to access current agents in event handlers (avoids stale closure)
   const agentsRef = useRef<AgentInfo[]>([]);
   useEffect(() => {
@@ -85,6 +91,20 @@ function App() {
             if (data.type === 'start') {
               setCurrentRunId(data.run_id);
               setLogs(prev => [...prev, `[START] Run ID: ${data.run_id}`]);
+
+              // Save metadata to localStorage for History UI
+              try {
+                const existing = JSON.parse(localStorage.getItem('agent_run_history') || '{}');
+                existing[data.run_id] = {
+                  task: taskInput || "Untitled Task",
+                  timestamp: new Date().toISOString()
+                };
+                localStorage.setItem('agent_run_history', JSON.stringify(existing));
+                // Dispatch event to notify sidebar
+                window.dispatchEvent(new Event('history-updated'));
+              } catch (e) {
+                console.warn("Failed to save run history", e);
+              }
             }
             else if (data.type === 'progress') {
               setLogs(prev => [...prev, `[LOG] ${data.message}`]);
@@ -277,11 +297,18 @@ function App() {
     const nodes = agents.map((agent) => ({
       data: {
         ...agent, // Spread ALL agent data (metadata, etc.)
-        label: `${agent.role}\n${agent.id.substring(0, 12)}`,
+        label: `${agent.warning ? '⚠️ ' : ''}${agent.role}\n${agent.id.substring(0, 12)}`,
       },
       style: {
         'background-color': getColorByRole(agent.role),
-        'background-opacity': 0.9
+        'background-opacity': 0.2, // Glassmorphism base
+        'border-color': agent.warning ? '#f1c40f' : getColorByRole(agent.role),
+        'border-opacity': 0.6,
+        'border-width': agent.warning ? 4 : 2,
+        'text-outline-color': '#000',
+        'text-outline-width': 2,
+        'text-outline-opacity': 1,
+        'color': '#fff'
       }
     }));
 
@@ -332,12 +359,26 @@ function App() {
   };
 
   const layout = {
-    name: 'dagre',
-    rankDir: 'TB',
-    nodeSep: 150,
-    rankSep: 150,
-    edgeSep: 50,
-    padding: 100
+    name: 'fcose',
+    quality: "default",
+    randomize: true,
+    animate: true,
+    animationDuration: 1000,
+    fit: true,
+    padding: 30,
+    nodeDimensionsIncludeLabels: true,
+    uniformNodeDimensions: false,
+    packComponents: true,
+    step: "all",
+    nodeRepulsion: (_node: any) => 4500,
+    idealEdgeLength: (_edge: any) => 100,
+    edgeElasticity: (_edge: any) => 0.45,
+    nestingFactor: 0.1,
+    gravity: 0.25,
+    numIter: 2500,
+    tile: true,
+    tilingPaddingVertical: 10,
+    tilingPaddingHorizontal: 10
   };
 
   const style = [
@@ -347,35 +388,55 @@ function App() {
         'label': 'data(label)',
         'text-valign': 'center',
         'text-halign': 'center',
+        'font-family': 'Inter, Roboto, sans-serif',
         'font-size': '10px',
+        'font-weight': 500,
         'color': '#fff',
         'text-wrap': 'wrap',
-        'width': 100,
-        'height': 50,
-        'shape': 'roundrectangle',
-        'border-width': 2,
-        'border-color': '#333'
+        'width': 80,
+        'height': 80,
+        'shape': 'ellipse',
+        'overlay-padding': '6px',
+        'z-index': 10
+      }
+    },
+    {
+      selector: 'node[warning]',
+      style: {
+        'border-width': 4,
+        'border-color': '#f1c40f',
+        'background-color': '#f1c40f',
+        'background-opacity': 0.2,
+        'text-outline-width': 2,
+        'text-outline-color': '#333',
+        'shadow-blur': 10,
+        'shadow-color': '#f1c40f',
+        'shadow-opacity': 0.5
       }
     },
     {
       selector: 'edge',
       style: {
-        'width': 2,
-        'line-color': '#808e9b',
-        'target-arrow-color': '#808e9b',
+        'width': 1.5,
+        'line-color': '#a4b0be',
+        'line-opacity': 0.6,
+        'target-arrow-color': '#a4b0be',
         'target-arrow-shape': 'triangle',
-        'curve-style': 'taxi', // Use taxi for cleaner routing in hierarchies
-        'taxi-direction': 'vertical',
-        'taxi-turn': 20
+        'curve-style': 'bezier',
+        'arrow-scale': 0.8
       }
     },
     {
       selector: 'edge[type="hierarchy"]',
       style: {
-        'line-style': 'dashed',
-        'width': 3,
-        'line-color': '#0be881',
-        'target-arrow-color': '#0be881'
+        'line-style': 'solid', // solid but thinner/lighter looks better in modern UI than dashed sometimes, but let's keep it distinct
+        'width': 2,
+        'line-color': '#2ed573',
+        'line-opacity': 0.8,
+        'target-arrow-color': '#2ed573',
+        'curve-style': 'unbundled-bezier',
+        'control-point-distances': [20, -20], // subtle wave
+        'control-point-weights': [0.25, 0.75]
       }
     }
   ];
@@ -455,19 +516,11 @@ function App() {
           {/* Fork Button */}
           {currentRunId && !isRunning && (
             <button
-              className="fork-btn"
-              style={{
-                background: 'transparent',
-                border: '1px solid #e1b12c',
-                color: '#e1b12c',
-                marginLeft: '10px',
-                padding: '8px 16px',
-                borderRadius: '4px',
-                cursor: 'pointer'
-              }}
+              className="header-fork-btn"
               onClick={() => {
                 if (confirm("Create a new copy of this run?")) handleForkRun(currentRunId);
               }}
+              title="Fork Run"
             >
               ⑂ Fork Run
             </button>
@@ -485,11 +538,21 @@ function App() {
 
       <div className="main-content">
         {/* Logs Panel */}
-        <div className="logs-pane">
-          <h3>Live Execution Logs</h3>
-          <div className="logs-container">
-            {logs.length === 0 && <span className="log-placeholder">Waiting for execution...</span>}
-            {logs.map((log, i) => <div key={i} className="log-line">{log}</div>)}
+        {/* Logs Panel */}
+        <div className={`logs-pane ${isLogsOpen ? 'open' : 'closed'}`}>
+          <button
+            className="logs-toggle"
+            onClick={() => setIsLogsOpen(!isLogsOpen)}
+            title="Toggle Logs"
+          >
+            {isLogsOpen ? 'Logs' : 'Logs'}
+          </button>
+          <div className="logs-content">
+            <h3>Live Execution Logs</h3>
+            <div className="logs-container">
+              {logs.length === 0 && <span className="log-placeholder">Waiting for execution...</span>}
+              {logs.map((log, i) => <div key={i} className="log-line">{log}</div>)}
+            </div>
           </div>
         </div>
 
@@ -550,6 +613,19 @@ function App() {
               {selectedAgent.error_message && (
                 <div className="error-box">
                   ⚠️ {selectedAgent.error_message}
+                </div>
+              )}
+
+              {selectedAgent.warning && (
+                <div className="warning-box" style={{
+                  background: 'rgba(241, 196, 15, 0.2)',
+                  border: '1px solid #f1c40f',
+                  borderRadius: '4px',
+                  padding: '8px 12px',
+                  marginBottom: '12px',
+                  color: '#f1c40f'
+                }}>
+                  ⚠️ {selectedAgent.warning}
                 </div>
               )}
 

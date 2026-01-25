@@ -1,23 +1,9 @@
 from langchain_core.messages import SystemMessage, HumanMessage
-from agents.dependencies import llm, llm_mini
+from agents.dependencies import llm, llm_mini, TIER1_THRESHOLD, TIER2_THRESHOLD, TIER3_THRESHOLD
 from agents.evaluate_confidence import evaluate_confidence
 from langchain_core.runnables import RunnableConfig
 import re
 import time
-import json
-import os
-
-# --- CONFIGURABLE HITL THRESHOLDS ---
-# Set these environment variables to test HITL behavior:
-# HITL_TIER1_THRESHOLD=0.5 (default) - Below this triggers self-correction
-# HITL_TIER2_THRESHOLD=0.5 (default) - Below this sets low_confidence_flag
-# HITL_TIER3_THRESHOLD=0.3 (default) - Below this triggers Hard Stop interrupt
-# For testing, set HITL_TIER3_THRESHOLD=0.99 to force interrupts on every node.
-TIER1_THRESHOLD = float(os.getenv("HITL_TIER1_THRESHOLD", "0.5"))
-TIER2_THRESHOLD = float(os.getenv("HITL_TIER2_THRESHOLD", "0.5"))
-TIER3_THRESHOLD = float(os.getenv("HITL_TIER3_THRESHOLD", "0.3"))
-
-
 
 async def generate_dynamic_system_prompt(instruction: str, agent_type: str, config: RunnableConfig = None) -> str:
     """
@@ -237,8 +223,13 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
                 
         # --- TIER 2: SOFT FLAG ---
         low_confidence_flag = confidence_score < TIER2_THRESHOLD
+        
+        # Build warning message if Tier 2 triggered
+        warning = None
+        if low_confidence_flag:
+            warning = f"Low Confidence Warning: {(confidence_score * 100):.0f}% - {confidence_reasoning}"
 
-        return {
+        result_dict = {
             "output": final_output,
             "metadata": {
                 "system_prompt": sys_prompt,
@@ -254,6 +245,11 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
                 "low_confidence_flag": low_confidence_flag
             }
         }
+        
+        if warning:
+            result_dict["metadata"]["warning"] = warning
+            
+        return result_dict
 
     except (Exception) as e:
         # Check if it's any kind of LangGraph interrupt (which shouldn't be caught)

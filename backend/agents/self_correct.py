@@ -1,7 +1,7 @@
 from typing import Dict, Any
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
-from agents.dependencies import llm
+from agents.dependencies import llm, TIER1_THRESHOLD
 
 async def simple_self_correct(instruction: str, output: str, previous_reasoning: str, agent_type: str, config: RunnableConfig = None) -> Dict[str, str]:
     """
@@ -10,7 +10,7 @@ async def simple_self_correct(instruction: str, output: str, previous_reasoning:
     """
     print(f"🔄 [AITL] Tier 1 Self-Correction triggered for {agent_type}")
     
-    correction_prompt = f"""You previously attempted to answer the following instruction but evaluated your own confidence as LOW (< 0.5).
+    correction_prompt = f"""You previously attempted to answer the following instruction but evaluated your own confidence as LOW (< {TIER1_THRESHOLD}).
     
 <instruction>
 {instruction}

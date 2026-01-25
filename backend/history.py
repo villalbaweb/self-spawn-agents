@@ -17,9 +17,6 @@ async def list_runs() -> List[Dict[str, Any]]:
     runs = []
     try:
         async with aiosqlite.connect(CHECKPOINT_DB_PATH) as db:
-            # Query distinct thread_ids. 
-            # Note: This schema assumption is based on standard LangGraph AsyncSqliteSaver
-            # It usually has table 'checkpoints' with column 'thread_id'
             try:
                 # Get all unique thread_ids and their latest checkpoint_id
                 query = """
@@ -30,13 +27,40 @@ async def list_runs() -> List[Dict[str, Any]]:
                 """
                 async with db.execute(query) as cursor:
                     async for row in cursor:
-                        runs.append({
-                            "run_id": row[0],
-                            "last_active": row[1]
-                        })
+                        run_id = row[0]
+                        last_active = row[1]
+                        
+                        run_info = {
+                            "run_id": run_id,
+                            "last_active": last_active,
+                            "task": "Unknown Task",
+                            "status": "unknown"
+                        }
+                        
+                        # Enrich with task name from memory state
+                        if shared_memory.memory:
+                            try:
+                                config = {"configurable": {"thread_id": run_id}}
+                                # aget_tuple returns (checkpoint, metadata, parent_config)
+                                # We need the channel values from the checkpoint
+                                state_tuple = await shared_memory.memory.aget_tuple(config)
+                                if state_tuple and state_tuple.checkpoint:
+                                    vals = state_tuple.checkpoint.get("channel_values", {})
+                                    run_info["task"] = vals.get("task", "Untitled Task")
+                                    # Try to infer status
+                                    if vals.get("synthesis"):
+                                        run_info["status"] = "completed"
+                                    elif vals.get("error"):
+                                        run_info["status"] = "failed"
+                                    else:
+                                        run_info["status"] = "active"
+                            except Exception as inner_e:
+                                print(f"Error fetching state for {run_id}: {inner_e}")
+                                
+                        runs.append(run_info)
+                        
             except Exception as e:
                 print(f"Error querying checkpoints table: {e}")
-                # Fallback or empty if table doesn't exist yet
                 pass
     except Exception as e:
         print(f"Error connecting to history DB: {e}")

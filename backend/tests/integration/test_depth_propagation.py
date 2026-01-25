@@ -1,16 +1,17 @@
+import pytest
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
 import sys
 import os
 
-sys.path.append(os.getcwd())
-sys.path.append(os.path.join(os.getcwd(), 'backend'))
 
-from backend.agents.graph_compiler import graph_compiler_node
+from agents.graph_compiler import graph_compiler_node
 
 class TestDepthPropagation(unittest.IsolatedAsyncioTestCase):
     
     @patch("backend.agents.graph_compiler.StateGraph") 
+    @pytest.mark.asyncio
+    @pytest.mark.asyncio
     async def test_depth_passed_to_dynamic_graph(self, mock_state_graph_cls):
         """Verify that graph_compiler_node initializes dynamic graph with depth from parent state."""
         print("\n🧪 Testing Depth Propagation in Graph Compiler...")

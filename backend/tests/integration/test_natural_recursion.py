@@ -1,24 +1,29 @@
+import pytest
 import asyncio
 import sys
 import os
 import json
 
 # Add backend directory to sys.path
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../backend'))
 
 from agent import app_graph
 
+@pytest.mark.asyncio
 async def test_natural_recursion():
     """
     Test with a NATURAL, non-technical user request.
     The system should autonomously decide when to spawn subgraphs.
+    
+    Epic 4.1 Update: Recursion is now handled via native LangGraph subgraphs.
+    When supervisor marks a node as recursive:true, the graph_compiler
+    invokes worker_subgraph which may use mini-orchestration for complex tasks.
     """
     print("🚀 Testing NATURAL Recursive Subgraph Triggering...")
     print("="*60)
     
     # Natural, non-technical user request
-    # This should decompose into multiple complex steps where an Orchestrator
-    # might decide to use spawn_subgraph
+    # This should decompose into multiple complex steps where the supervisor
+    # might mark nodes as recursive, triggering worker_subgraph
     task = "I want to start a blog about cooking. Help me build a complete website with recipes, user accounts, and a newsletter signup."
     
     print(f"📝 User Task: {task}")
@@ -45,9 +50,9 @@ async def test_natural_recursion():
             kind = event.get("event")
             name = event.get("name", "")
             
-            # Look for recursion signals - now handled via recursive nodes in graph_compiler
-            if kind == "on_chain_start" and name.startswith("SubOrchestrator"):
-                 print(f"🔄 RECURSION TRIGGERED - {name} agent starting!")
+            # Look for recursion signals - now handled via native worker_subgraph
+            if kind == "on_chain_start" and ("MiniOrchestrator" in name or "worker_subgraph" in name.lower()):
+                 print(f"🔄 NATIVE SUBGRAPH TRIGGERED - {name}!")
                  recursion_detected = True
 
             # Show progress
@@ -75,13 +80,14 @@ async def test_natural_recursion():
         for node in graph_plan.get("nodes", []):
             print(f"   - [{node['agent_type']}] {node['id']}: {node['instruction'][:60]}... (Recursive: {node.get('recursive', False)})")
             
-        # Check all_agents for Sub-Orchestrator
+        # Check all_agents for MiniOrchestrator or SubOrchestrator (new native subgraph)
         for agent in all_agents:
-            if agent.get("role") == "SubOrchestrator":
-                print(f"   ✅ Agent '{agent['id']}' is a Sub-Orchestrator")
+            role = agent.get("role", "")
+            if role in ["SubOrchestrator", "MiniOrchestrator"]:
+                print(f"   ✅ Agent '{agent['id']}' is a {role} (depth {agent.get('depth')})")
                 recursion_detected = True
 
-        print(f"\n🔹 Recursion Detected: {'✅ YES' if recursion_detected else '❌ NO'}")
+        print(f"\n🔹 Recursion/Mini-Orchestration Detected: {'✅ YES' if recursion_detected else '❌ NO'}")
         
     except Exception as e:
         print(f"❌ Error: {e}")

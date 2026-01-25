@@ -5,6 +5,9 @@ from agents.state import AgentState, replace, merge_lists
 from agents.workers.generic import generic_worker_node
 from agents.blueprint import AppBlueprint, AgentInfo, EdgeInfo
 from agents import shared_memory
+from agents.subgraphs import worker_subgraph
+from agents.subgraphs.state import WorkerState
+from agents.dependencies import MAX_RECURSION_DEPTH
 from langgraph.types import interrupt, Command
 import json
 import uuid
@@ -39,9 +42,14 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
         is_recursive = node.get("recursive", False)
         
         if is_recursive:
-            # RECURSIVE NODE: Spawn full sub-orchestration
-            # This is the "Sub-Orchestrator Agent" node
+            # RECURSIVE NODE: Use native WorkerSubgraph (Epic 4.1)
+            # This is a lightweight subgraph that SKIPS semantic_splitter and supervisor
+            # It uses mini-planning internally if the task needs decomposition
             async def _recursive_node_fn(s: AgentState, config: RunnableConfig, _instr=instruction, _id=node_id, _deps=dependencies):
+                current_depth = s.get("depth", 0)
+                budget_config = s.get("budget_config") or {}
+                usage_stats = s.get("usage_stats") or {}
+                
                 # --- PRE-FLIGHT SAFETY CHECKS ---
                 # 1. Zombie Pruning: Check if a sibling has signaled an interrupt
                 if s.get("global_signal") == "INTERRUPT":
@@ -49,13 +57,11 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                     return {
                         "results": {_id: "[Aborted: Sibling branch triggered interrupt]"},
                         "metadata": {_id: {"status": "aborted", "agent_role": "SubOrchestrator"}},
-                        "all_agents": [{"id": _id, "role": "SubOrchestrator", "status": "aborted", "depth": s.get("depth", 0), "instruction": _instr, "output": ""}],
+                        "all_agents": [{"id": _id, "role": "SubOrchestrator", "status": "aborted", "depth": current_depth, "instruction": _instr, "output": ""}],
                         "all_edges": []
                     }
 
                 # 2. Budget Check
-                budget_config = s.get("budget_config") or {}
-                usage_stats = s.get("usage_stats") or {}
                 max_cost = budget_config.get("max_cost")
                 current_cost = usage_stats.get("cost", 0.0)
 
@@ -65,23 +71,24 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                         "results": {_id: f"[Budget Limit Reached: ${current_cost:.2f}]"},
                         "metadata": {_id: {"status": "budget_exceeded", "agent_role": "SubOrchestrator"}},
                         "global_signal": "INTERRUPT",
-                        "all_agents": [{"id": _id, "role": "SubOrchestrator", "status": "budget_exceeded", "depth": s.get("depth", 0), "instruction": _instr, "output": ""}],
+                        "all_agents": [{"id": _id, "role": "SubOrchestrator", "status": "budget_exceeded", "depth": current_depth, "instruction": _instr, "output": ""}],
                         "all_edges": []
                     }
 
-                from agent import app_graph
-                from agents.dependencies import MAX_RECURSION_DEPTH
-                current_depth = s.get("depth", 0)
-                print(f"🔄 [RecursiveNode] Sub-orchestrator agent starting for: {_instr[:50]}... (Depth: {current_depth})")
+                # 3. Depth Check
+                print(f"🔄 [RecursiveNode] Native WorkerSubgraph for: {_instr[:50]}... (Depth: {current_depth})")
                 
                 if current_depth >= MAX_RECURSION_DEPTH:
+                    print(f"🛑 [RecursiveNode] Depth limit reached ({current_depth} >= {MAX_RECURSION_DEPTH})")
                     return {
-                        "results": {_id: f"[Depth limit reached]"},
+                        "results": {_id: f"[Depth limit reached: {current_depth}]"},
                         "metadata": {_id: {"agent_role": "Skipped"}},
-                        "all_agents": [], "all_edges": [],
+                        "all_agents": [{"id": _id, "role": "SubOrchestrator", "status": "depth_limited", "depth": current_depth, "instruction": _instr, "output": ""}],
+                        "all_edges": [],
                         "usage_stats": {"steps": 1}
                     }
                 
+                # --- BUILD CONTEXT FROM DEPENDENCIES ---
                 context_parts = []
                 results = s.get("results", {})
                 if _deps:
@@ -91,64 +98,92 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                             truncated = dep_output[:2000] + "..." if len(dep_output) > 2000 else dep_output
                             context_parts.append(f"<input_data source=\"{dep_id}\">\n{truncated}\n</input_data>")
                 
-                # Prepare state for the subgraph, passing budget_config down
-                sub_state = {
-                    "task": _instr + ("\n\nContext:\n" + "\n".join(context_parts) if context_parts else ""),
-                    "subtasks": [], "graph_plan": {}, "results": {},
-                    "depth": current_depth + 1,
+                enriched_task = _instr
+                if context_parts:
+                    enriched_task = _instr + "\n\nContext:\n" + "\n".join(context_parts)
+                
+                # --- INVOKE NATIVE WORKER SUBGRAPH ---
+                # Uses lightweight mini-planner instead of full app_graph
+                # Flow: execute (with optional mini-plan) → validate
+                sub_state: WorkerState = {
+                    "task": enriched_task,
                     "subject": s.get("subject", ""),
-                    "all_agents": [], "all_edges": [],
-                    "budget_config": budget_config,  # Pass budget down to subgraph
-                    "usage_stats": usage_stats  # Pass current usage down
+                    "parent_node_id": _id,
+                    "depth": current_depth + 1,
+                    "results": {},
+                    "all_agents": [],
+                    "all_edges": [],
+                    "global_signal": s.get("global_signal", ""),
+                    "usage_stats": usage_stats,
+                    "budget_config": budget_config,
+                    "confidence_score": 0.0,
+                    "confidence_reasoning": ""
                 }
                 
-                # We still call ainvoke here for now, but as a "sub-orchestrator agent" node.
-                # In the future, we could replace 'app_graph' with a native subgraph node.
-                if config:
-                    # Ensure we pass a unique thread_id for the sub-operation if we want isolation,
-                    # OR use the same one if we want deep addressing (not yet fully supported in this way).
-                    # For now, we use a child thread ID to maintain recursion safety.
-                    sub_config = config.copy()
-                    sub_config["configurable"] = {**sub_config.get("configurable", {}), "thread_id": f"{config['configurable']['thread_id']}_{_id}"}
-                    final_sub_state = await app_graph.ainvoke(sub_state, config=sub_config)
-                else:
-                    final_sub_state = await app_graph.ainvoke(sub_state)
+                try:
+                    final_sub_state = await worker_subgraph.ainvoke(sub_state, config=config)
+                except Exception as e:
+                    print(f"❌ [RecursiveNode] WorkerSubgraph failed: {e}")
+                    return {
+                        "results": {_id: f"[Subgraph error: {str(e)}]"},
+                        "metadata": {_id: {"status": "error", "agent_role": "SubOrchestrator"}},
+                        "all_agents": [{"id": _id, "role": "SubOrchestrator", "status": "error", "depth": current_depth, "instruction": _instr, "output": str(e)}],
+                        "all_edges": [],
+                        "usage_stats": {"steps": 1}
+                    }
                 
+                # --- EXTRACT RESULTS ---
                 sub_results = final_sub_state.get("results", {})
                 sub_agents = final_sub_state.get("all_agents", [])
                 sub_edges = final_sub_state.get("all_edges", [])
                 sub_usage = final_sub_state.get("usage_stats", {})
-                synthesis = final_sub_state.get("synthesis", "")
-                result_summary = synthesis if synthesis else str(sub_results)
+                confidence = final_sub_state.get("confidence_score", 0.5)
                 
+                # Get output from results (keyed by parent_node_id)
+                result_output = sub_results.get(_id, str(sub_results))
+                
+                # Build hierarchy edges connecting parent to child agents
                 hierarchy_edges = []
-                sub_depth = current_depth + 1
-                root_sub_agents = [a for a in sub_agents if a.get("depth") == sub_depth]
-                for root_agent in root_sub_agents:
+                for sub_agent in sub_agents:
                     hierarchy_edges.append({
-                        "source": _id, "target": root_agent["id"],
-                        "depth": current_depth, "type": "hierarchy"
+                        "source": _id, 
+                        "target": sub_agent["id"],
+                        "depth": current_depth, 
+                        "type": "hierarchy"
                     })
 
+                # Create parent orchestrator agent record
                 parent_agent = {
-                    "id": _id, "role": "SubOrchestrator",
-                    "instruction": _instr, "output": result_summary,
-                    "tools": [], "depth": current_depth,
-                    "status": "completed"
+                    "id": _id, 
+                    "role": "SubOrchestrator",
+                    "instruction": _instr, 
+                    "output": result_output[:500] if len(result_output) > 500 else result_output,
+                    "tools": [], 
+                    "depth": current_depth,
+                    "status": "completed",
+                    "confidence_score": confidence
                 }
                 
-                # Propagate usage from subgraph and add step for this orchestrator
+                # Propagate usage from subgraph
                 usage_update = {"steps": 1}
                 for key, val in sub_usage.items():
                     usage_update[key] = usage_update.get(key, 0) + val
+                
+                # Check if subgraph triggered interrupt
+                global_signal = final_sub_state.get("global_signal", "")
 
-                return {
-                    "results": {_id: result_summary},
-                    "metadata": {_id: {"agent_role": "SubOrchestrator"}},
+                return_data = {
+                    "results": {_id: result_output},
+                    "metadata": {_id: {"agent_role": "SubOrchestrator", "confidence_score": confidence}},
                     "all_agents": [parent_agent] + sub_agents,
                     "all_edges": hierarchy_edges + sub_edges,
                     "usage_stats": usage_update
                 }
+                
+                if global_signal:
+                    return_data["global_signal"] = global_signal
+                    
+                return return_data
             
             workflow.add_node(node_id, _recursive_node_fn)
         else:
@@ -223,7 +258,7 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                     "status": meta.get("status", "completed")
                 }
                 # Transfer other metadata fields
-                for key in ["execution_time_seconds", "tool_used", "tools_available", "error_message", "confidence_score", "confidence_reasoning", "low_confidence_flag"]:
+                for key in ["execution_time_seconds", "tool_used", "tools_available", "error_message", "confidence_score", "confidence_reasoning", "low_confidence_flag", "warning"]:
                     if key in meta:
                         agent_data[key] = meta[key]
 
@@ -232,6 +267,13 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 step_cost = meta.get("estimated_cost", 0.01)  # Default small cost per step
                 usage_update = {"steps": 1, "cost": step_cost}
                 
+                # --- TIER 2 WARNING: Budget approaching limit ---
+                warning_message = None
+                new_cost = current_cost + step_cost
+                if max_cost is not None and new_cost > max_cost * 0.8:
+                    warning_message = f"Budget Warning: {(new_cost / max_cost * 100):.0f}% used (${new_cost:.2f}/${max_cost:.2f})"
+                    print(f"⚠️ [Tier2Warning] {warning_message}")
+
                 # Check if this node triggered a Tier 3 interrupt (low confidence)
                 node_return = {
                     "results": {_id: result["output"]},
@@ -240,6 +282,10 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                     "all_edges": [],
                     "usage_stats": usage_update
                 }
+                
+                # Attach warning to agent_data if present
+                if warning_message:
+                    agent_data["warning"] = warning_message
 
                 # If low confidence, set global signal to pause siblings
                 if meta.get("low_confidence_flag"):
