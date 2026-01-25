@@ -451,8 +451,11 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 "all_agents": [],
                 "all_edges": [{"source": e.source, "target": e.target, "depth": state.get("depth", 0)} for e in blueprint_edges],
                 # Pass budget config and usage stats for enforcement
-                "budget_config": state.get("budget_config") or {},
-                "usage_stats": state.get("usage_stats") or {},
+                "usage_stats": {}, # Start empty to return only the delta
+                "budget_config": {
+                    **(state.get("budget_config") or {}),
+                    "external_cost": (state.get("usage_stats") or {}).get("cost", 0.0)
+                },
                 "root_task_id": state.get("root_task_id")
             }
              try:
