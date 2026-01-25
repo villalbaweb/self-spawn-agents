@@ -452,7 +452,8 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 "all_edges": [{"source": e.source, "target": e.target, "depth": state.get("depth", 0)} for e in blueprint_edges],
                 # Pass budget config and usage stats for enforcement
                 "budget_config": state.get("budget_config") or {},
-                "usage_stats": state.get("usage_stats") or {}
+                "usage_stats": state.get("usage_stats") or {},
+                "root_task_id": state.get("root_task_id")
             }
              try:
                 await app.ainvoke(initial_dynamic_state, config=inner_config)

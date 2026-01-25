@@ -64,6 +64,7 @@ async def semantic_splitter_node(state: AgentState, config: RunnableConfig = Non
             "subtasks": response.subtasks, 
             "subject": response.subject, 
             "deliverables": response.deliverables,
+            "root_task_id": task_id,
             "usage_stats": cost_callback.to_usage_stats()
         }
     except Exception as e:
