@@ -32,15 +32,20 @@
     *   **New:** Enforces Zombie Branch Pruning via Global Interrupt Signals.
 
 ### Module 4: Native Worker Subgraph Architecture
-*   **Status:** ✅ **Operational (Refactored - Epic 4.1)**
-*   **Core Component:** `WorkerSubgraph` (Native LangGraph Subgraph).
+*   **Status:** ✅ **Operational (Refactored - Epic 4.1 Complete)**
+*   **Core Component:** `WorkerSubgraph` (Native LangGraph Subgraph with Mini-Orchestration).
 *   **Function:** Executes recursive sub-tasks with a lightweight flow, bypassing full orchestration.
 *   **Current Capabilities:**
     *   Native LangGraph subgraph composition (`execute → validate`).
-    *   ~70% latency reduction per recursion level (2 LLM calls vs 4-5).
+    *   **Smart complexity detection:** Heuristics + LLM classify task complexity via `should_decompose()`.
+    *   **Mini-orchestration:** Complex tasks trigger `create_mini_plan()` → 2-4 parallel workers.
+    *   **Recursive spawning:** Complex child tasks in mini-plan spawn their own subgraphs.
+    *   **Multi-level hierarchy:** Supports depth 0 → 1 → 2 → 3 recursive decomposition.
+    *   ~60-70% latency reduction per recursion level (2-6 LLM calls vs 5-8).
     *   Multi-level depth handling with inherited budget configs.
     *   Full state visibility in parent graph (unified tracing).
-    *   **Removed:** Legacy `spawn_subgraph` tool replaced with native integration.
+    *   **Safety preserved:** Zombie Pruning, Budget Caps, Depth Limits all enforced in subgraph.
+    *   **Removed:** Legacy `spawn_subgraph` tool and `app_graph.ainvoke()` recursion.
 
 ### Module 5: Quality Assurance & Sandboxing (Modules 4.5 & 5.5)
 *   **Status:** ✅ **Operational**

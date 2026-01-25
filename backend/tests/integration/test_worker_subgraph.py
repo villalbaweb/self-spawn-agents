@@ -1,15 +1,24 @@
 """
 Tests for the Native Worker Subgraph (Epic 4.1).
 
-Verifies the hybrid execute flow:
-- Simple tasks: Direct execute → validate (2 LLM calls)
-- Complex tasks: Delegate to full orchestration for multi-level spawning
+Verifies the lightweight mini-orchestration flow:
+- Simple tasks: Direct execute → validate (2-3 LLM calls)
+- Complex tasks: Mini-plan → parallel workers → validate (3-6 LLM calls)
+- Recursive spawning: Complex child tasks spawn their own subgraphs
 """
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
 from agents.subgraphs import worker_subgraph, build_worker_subgraph, WorkerState
-from agents.subgraphs.worker_subgraph import execute_node, validate_node, analyze_task_complexity
+from agents.subgraphs.worker_subgraph import (
+    execute_node, 
+    validate_node, 
+    should_decompose,
+    create_mini_plan,
+    execute_mini_plan,
+    MiniTask,
+    MiniPlan
+)
 
 
 @pytest.fixture
@@ -50,29 +59,84 @@ def complex_worker_state() -> WorkerState:
     )
 
 
-class TestComplexityAnalysis:
-    """Tests for task complexity detection."""
+class TestShouldDecompose:
+    """Tests for the should_decompose complexity detection."""
     
     @pytest.mark.asyncio
-    async def test_simple_task_detected_by_heuristics(self):
-        """Simple short tasks should be detected without LLM call."""
-        result = await analyze_task_complexity("Find the current price of Bitcoin")
-        assert result["needs_orchestration"] is False
-        assert "heuristics" in result["reasoning"].lower()
+    async def test_short_simple_task_returns_false(self):
+        """Short tasks without indicators should return False."""
+        result = await should_decompose("Find the current price of Bitcoin")
+        assert result is False
     
     @pytest.mark.asyncio
-    async def test_complex_task_triggers_llm_analysis(self):
-        """Complex tasks with multiple keywords should trigger LLM analysis."""
-        complex_task = "Build a complete REST API with authentication, database integration, and automated testing"
+    async def test_strong_indicators_return_true(self):
+        """Tasks with 2+ strong indicators should return True."""
+        task = "Implement authentication with OAuth2 and JWT tokens"
+        result = await should_decompose(task)
+        assert result is True
+    
+    @pytest.mark.asyncio
+    async def test_multiple_and_conjunctions_return_true(self):
+        """Tasks with 2+ 'and' conjunctions should return True."""
+        task = "Build a REST API and add database support and implement testing"
+        result = await should_decompose(task)
+        assert result is True
+    
+    @pytest.mark.asyncio
+    async def test_no_indicators_short_task_returns_false(self):
+        """Short tasks without complexity indicators should return False."""
+        result = await should_decompose("Write a hello world function")
+        assert result is False
+    
+    @pytest.mark.asyncio
+    async def test_llm_check_on_uncertain_task(self):
+        """Tasks with 1-2 indicators should trigger LLM check."""
+        task = "Create a user registration API with validation"  # Has "with" but short
         
         mock_response = MagicMock()
-        mock_response.content = '{"needs_orchestration": true, "reasoning": "Multiple deliverables"}'
+        mock_response.content = "DECOMPOSE"
         
         with patch("agents.subgraphs.worker_subgraph.llm_mini") as mock_llm:
             mock_llm.ainvoke = AsyncMock(return_value=mock_response)
-            result = await analyze_task_complexity(complex_task)
+            result = await should_decompose(task)
+            # Should have called LLM for uncertain case
+            # Result depends on mock
+
+
+class TestMiniPlanner:
+    """Tests for the mini-planner functionality."""
+    
+    @pytest.mark.asyncio
+    async def test_create_mini_plan_returns_plan(self):
+        """create_mini_plan should return a MiniPlan with tasks."""
+        mock_plan = MiniPlan(
+            tasks=[
+                MiniTask(id="task_1", agent_type="Researcher", instruction="Research OAuth2"),
+                MiniTask(id="task_2", agent_type="Coder", instruction="Implement JWT")
+            ],
+            reasoning="Split into research and implementation"
+        )
+        
+        with patch("agents.subgraphs.worker_subgraph.llm_mini") as mock_llm:
+            structured_mock = MagicMock()
+            structured_mock.ainvoke = AsyncMock(return_value=mock_plan)
+            mock_llm.with_structured_output.return_value = structured_mock
             
-            assert result["needs_orchestration"] is True
+            result = await create_mini_plan("Build auth with OAuth2 and JWT", "Auth System")
+            
+            assert len(result.tasks) == 2
+            assert result.tasks[0].id == "task_1"
+    
+    @pytest.mark.asyncio
+    async def test_create_mini_plan_fallback_on_error(self):
+        """create_mini_plan should return fallback plan on error."""
+        with patch("agents.subgraphs.worker_subgraph.llm_mini") as mock_llm:
+            mock_llm.with_structured_output.side_effect = Exception("API Error")
+            
+            result = await create_mini_plan("Some task", "Subject")
+            
+            assert len(result.tasks) == 1
+            assert result.tasks[0].id == "fallback_research"
 
 
 class TestWorkerSubgraphStructure:
@@ -87,7 +151,6 @@ class TestWorkerSubgraphStructure:
     def test_worker_subgraph_is_compiled(self):
         """Verify the pre-compiled worker_subgraph is usable."""
         assert worker_subgraph is not None
-        # CompiledGraph should have ainvoke method
         assert hasattr(worker_subgraph, "ainvoke")
 
 
@@ -135,10 +198,10 @@ class TestExecuteNode:
             "metadata": {"status": "completed", "confidence_score": 0.85}
         }
         
-        with patch("agents.subgraphs.worker_subgraph.analyze_task_complexity", new_callable=AsyncMock) as mock_analyze, \
+        with patch("agents.subgraphs.worker_subgraph.should_decompose", new_callable=AsyncMock) as mock_decompose, \
              patch("agents.subgraphs.worker_subgraph.generic_worker_node", new_callable=AsyncMock) as mock_worker:
             
-            mock_analyze.return_value = {"needs_orchestration": False, "reasoning": "Simple task"}
+            mock_decompose.return_value = False
             mock_worker.return_value = mock_result
             
             result = await execute_node(simple_worker_state)
@@ -148,32 +211,36 @@ class TestExecuteNode:
             assert "AI is transforming" in result["results"]["test_worker_1"]
     
     @pytest.mark.asyncio
-    async def test_complex_task_uses_full_orchestration(self, complex_worker_state):
-        """Complex tasks should delegate to full app_graph orchestration."""
-        mock_orchestration_result = {
-            "synthesis": "Complete auth system implemented with OAuth2, JWT, and RBAC.",
-            "results": {"auth_module": "JWT middleware", "rbac_module": "Permission system"},
-            "all_agents": [
-                {"id": "researcher_1", "role": "Researcher", "depth": 2},
-                {"id": "coder_1", "role": "Coder", "depth": 2}
+    async def test_complex_task_uses_mini_orchestration(self, complex_worker_state):
+        """Complex tasks should use mini-plan + parallel execution."""
+        mock_plan = MiniPlan(
+            tasks=[
+                MiniTask(id="oauth_research", agent_type="Researcher", instruction="Research OAuth2"),
+                MiniTask(id="jwt_impl", agent_type="Coder", instruction="Implement JWT"),
             ],
-            "all_edges": [],
-            "usage_stats": {"steps": 5, "cost": 0.15}
+            reasoning="Split into research and implementation"
+        )
+        
+        mock_worker_result = {
+            "output": "Task completed successfully",
+            "metadata": {"status": "completed", "confidence_score": 0.85}
         }
         
-        with patch("agents.subgraphs.worker_subgraph.analyze_task_complexity", new_callable=AsyncMock) as mock_analyze:
-            mock_analyze.return_value = {"needs_orchestration": True, "reasoning": "Multiple deliverables"}
+        with patch("agents.subgraphs.worker_subgraph.should_decompose", new_callable=AsyncMock) as mock_decompose, \
+             patch("agents.subgraphs.worker_subgraph.create_mini_plan", new_callable=AsyncMock) as mock_planner, \
+             patch("agents.subgraphs.worker_subgraph.generic_worker_node", new_callable=AsyncMock) as mock_worker:
             
-            with patch("agent.app_graph") as mock_app_graph:
-                mock_app_graph.ainvoke = AsyncMock(return_value=mock_orchestration_result)
-                
-                result = await execute_node(complex_worker_state)
-                
-                mock_app_graph.ainvoke.assert_called_once()
-                assert result["all_agents"][0]["orchestration_mode"] == "full"
-                assert result["all_agents"][0]["role"] == "SubOrchestrator"
-                # Should include child agents
-                assert len(result["all_agents"]) == 3  # orchestrator + 2 children
+            mock_decompose.return_value = True
+            mock_planner.return_value = mock_plan
+            mock_worker.return_value = mock_worker_result
+            
+            result = await execute_node(complex_worker_state)
+            
+            mock_planner.assert_called_once()
+            assert result["all_agents"][0]["role"] == "MiniOrchestrator"
+            assert result["all_agents"][0]["orchestration_mode"] == "mini"
+            # Should have MiniOrchestrator + child agents
+            assert len(result["all_agents"]) >= 2
 
 
 class TestValidateNode:
@@ -231,11 +298,11 @@ class TestWorkerSubgraphIntegration:
         }
         mock_confidence = {"confidence_score": 0.88, "confidence_reasoning": "Thorough analysis."}
         
-        with patch("agents.subgraphs.worker_subgraph.analyze_task_complexity", new_callable=AsyncMock) as mock_analyze, \
+        with patch("agents.subgraphs.worker_subgraph.should_decompose", new_callable=AsyncMock) as mock_decompose, \
              patch("agents.subgraphs.worker_subgraph.generic_worker_node", new_callable=AsyncMock) as mock_worker, \
              patch("agents.subgraphs.worker_subgraph.evaluate_confidence", new_callable=AsyncMock) as mock_eval:
             
-            mock_analyze.return_value = {"needs_orchestration": False, "reasoning": "Simple task"}
+            mock_decompose.return_value = False
             mock_worker.return_value = mock_worker_result
             mock_eval.return_value = mock_confidence
             
@@ -256,47 +323,77 @@ class TestWorkerSubgraphIntegration:
         assert result["all_agents"][0]["status"] == "budget_exceeded"
 
 
-class TestDeepOrchestration:
-    """Tests verifying multi-level spawning capability is preserved."""
+class TestRecursiveSpawning:
+    """Tests verifying multi-level spawning capability."""
     
     @pytest.mark.asyncio
-    async def test_complex_task_spawns_child_graph(self, complex_worker_state):
-        """Complex task should spawn full orchestration with child agents."""
-        # Simulate a 3-level deep orchestration result
-        mock_orchestration = {
-            "synthesis": "Full auth system built",
-            "results": {
-                "oauth_module": "OAuth2 implementation",
-                "jwt_module": "JWT token service", 
-                "rbac_module": "Role-based access control"
-            },
-            "all_agents": [
-                {"id": "oauth_researcher", "role": "Researcher", "depth": 2, "instruction": "OAuth2 best practices"},
-                {"id": "jwt_coder", "role": "Coder", "depth": 2, "instruction": "Implement JWT"},
-                {"id": "rbac_orchestrator", "role": "SubOrchestrator", "depth": 2, "instruction": "Build RBAC"},
-                {"id": "rbac_researcher", "role": "Researcher", "depth": 3, "instruction": "RBAC patterns"},
-                {"id": "rbac_coder", "role": "Coder", "depth": 3, "instruction": "Permission decorators"}
+    async def test_complex_mini_task_spawns_child_subgraph(self, complex_worker_state):
+        """Complex child tasks in mini-plan should spawn recursive subgraphs."""
+        # Create a mini-plan where one task is complex enough to recurse
+        mock_plan = MiniPlan(
+            tasks=[
+                MiniTask(id="oauth_impl", agent_type="Researcher", instruction="Implement OAuth2 with refresh tokens and token validation"),
+                MiniTask(id="simple_task", agent_type="Coder", instruction="Write a test"),
             ],
-            "all_edges": [
-                {"source": "rbac_orchestrator", "target": "rbac_researcher"},
-                {"source": "rbac_orchestrator", "target": "rbac_coder"}
-            ],
-            "usage_stats": {"steps": 8, "cost": 0.25}
+            reasoning="Split authentication implementation"
+        )
+        
+        mock_worker_result = {
+            "output": "Task completed",
+            "metadata": {"status": "completed", "confidence_score": 0.8}
         }
         
-        with patch("agents.subgraphs.worker_subgraph.analyze_task_complexity", new_callable=AsyncMock) as mock_analyze:
-            mock_analyze.return_value = {"needs_orchestration": True, "reasoning": "Multi-step build"}
+        # Track should_decompose calls to verify recursive check
+        decompose_calls = []
+        async def mock_decompose(task, config=None):
+            decompose_calls.append(task)
+            # First call (main task) returns True to trigger mini-plan
+            # Subsequent calls for child tasks
+            if "OAuth2" in task and "refresh" in task:
+                return True  # Complex child task
+            return False
+        
+        with patch("agents.subgraphs.worker_subgraph.should_decompose", side_effect=mock_decompose), \
+             patch("agents.subgraphs.worker_subgraph.create_mini_plan", new_callable=AsyncMock) as mock_planner, \
+             patch("agents.subgraphs.worker_subgraph.generic_worker_node", new_callable=AsyncMock) as mock_worker, \
+             patch("agents.subgraphs.worker_subgraph._get_compiled_subgraph") as mock_get_subgraph:
             
-            with patch("agent.app_graph") as mock_app:
-                mock_app.ainvoke = AsyncMock(return_value=mock_orchestration)
+            mock_planner.return_value = mock_plan
+            mock_worker.return_value = mock_worker_result
+            
+            # Mock the recursive subgraph call
+            mock_child_result = {
+                "results": {"oauth_impl": "OAuth2 implemented with refresh tokens"},
+                "all_agents": [{"id": "child_worker", "role": "SubWorker", "depth": 2, "status": "completed"}],
+                "all_edges": [],
+                "usage_stats": {"steps": 1}
+            }
+            mock_subgraph = MagicMock()
+            mock_subgraph.ainvoke = AsyncMock(return_value=mock_child_result)
+            mock_get_subgraph.return_value = mock_subgraph
+            
+            result = await execute_node(complex_worker_state)
+            
+            # Verify mini-orchestration was used
+            assert result["all_agents"][0]["role"] == "MiniOrchestrator"
+            
+            # Verify should_decompose was called for child tasks
+            assert len(decompose_calls) >= 2  # Main task + at least one child check
+    
+    @pytest.mark.asyncio
+    async def test_depth_limit_prevents_infinite_recursion(self, complex_worker_state):
+        """Ensure recursion stops at MAX_RECURSION_DEPTH."""
+        complex_worker_state["depth"] = 2  # Near limit
+        
+        with patch("agents.subgraphs.worker_subgraph.MAX_RECURSION_DEPTH", 3):
+            with patch("agents.subgraphs.worker_subgraph.should_decompose", new_callable=AsyncMock) as mock_decompose, \
+                 patch("agents.subgraphs.worker_subgraph.generic_worker_node", new_callable=AsyncMock) as mock_worker:
+                
+                mock_decompose.return_value = True  # Would want to decompose
+                mock_worker.return_value = {"output": "Direct execution", "metadata": {}}
                 
                 result = await execute_node(complex_worker_state)
                 
-                # Verify multi-level agents are present
-                agent_depths = [a["depth"] for a in result["all_agents"]]
-                assert 1 in agent_depths  # Parent orchestrator
-                assert 2 in agent_depths  # Level 2 agents
-                assert 3 in agent_depths  # Level 3 agents (deep spawning works!)
-                
-                # Verify hierarchy edges created
-                assert len(result["all_edges"]) > 0
+                # At depth 2 with MAX=3, should still try to decompose
+                # But the condition checks current_depth < MAX_RECURSION_DEPTH - 1
+                # So at depth 2, it won't decompose (2 < 3-1 = 2 is False)

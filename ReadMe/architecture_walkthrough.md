@@ -151,16 +151,36 @@ semantic_splitter → supervisor → graph_compiler (runs dynamic graph) → syn
 ### Feature 3: E2B Python Execution
 - Secure cloud sandbox via `e2b-code-interpreter`
 
-### Feature 4: Native Worker Subgraph (Epic 4.1)
+### Feature 4: Native Worker Subgraph (Epic 4.1) ✅
 - SubOrchestrator nodes use a lightweight native LangGraph subgraph
 - **Skips redundant steps**: No semantic_splitter or supervisor for child tasks
-- **Smart execution path**:
-  - Simple tasks: Direct execution (1-2 LLM calls)
-  - Complex tasks: Mini-planner creates 2-4 parallel workers (3-5 LLM calls)
-- **Cost comparison**: 2-5 LLM calls vs 5-8 with full `app_graph.ainvoke()`
+- **Smart complexity detection**: Heuristics + LLM classify task complexity
+- **Execution paths**:
+  - **Simple tasks**: Direct execution via `generic_worker_node` (2-3 LLM calls)
+  - **Complex tasks**: Mini-planner creates 2-4 parallel workers (3-6 LLM calls)
+  - **Recursive spawning**: Complex child tasks in mini-plan spawn their own subgraphs
+- **Cost comparison**: 2-6 LLM calls vs 5-8 with full `app_graph.ainvoke()`
+- **Multi-level hierarchy**: Supports depth 0 → 1 → 2 → 3 recursive decomposition
 - ~60% latency reduction per recursion level
 - Full state visibility in parent graph
-- Depth limit: 3 (configurable via MAX_RECURSION_DEPTH)
+- Depth limit: 3 (configurable via `MAX_RECURSION_DEPTH`)
+
+```mermaid
+flowchart TB
+    subgraph WorkerSubgraph["Worker Subgraph (Native)"]
+        WS[should_decompose] -->|Simple| WD[Direct Execution]
+        WS -->|Complex| WP[create_mini_plan]
+        WP --> WE[execute_mini_plan]
+        WE --> WT1[Worker 1]
+        WE --> WT2[Worker 2]
+        WE --> WT3[Worker 3]
+        WT1 -->|Complex child?| WR[Recursive Subgraph]
+        WD --> WV[validate]
+        WT1 --> WV
+        WT2 --> WV
+        WT3 --> WV
+    end
+```
 
 ### Feature 5: Safety Logic (Phase 2)
 - **Atomic Persistence:** State checks saved after *every node*. Crash recovery is instant.

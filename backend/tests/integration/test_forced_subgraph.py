@@ -9,35 +9,34 @@ import json
 from agents.graph_compiler import graph_compiler_node
 
 @pytest.mark.asyncio
-@pytest.mark.asyncio
 async def test_forced_subgraph():
     """
     This test FORCES a subgraph spawn by:
-    1. Manually constructing a graph_plan with an "Orchestrator" agent type
-    2. Giving it an explicitly complex task that encourages using spawn_subgraph
-    """
-    print("🚀 Testing FORCED Recursive Subgraph...")
+    1. Manually constructing a graph_plan with a "Sub-Orchestrator" agent type
+    2. Setting recursive: true to trigger the native WorkerSubgraph
     
-    # Manually create a plan with an Orchestrator node
-    # The Orchestrator is the ONLY agent type that has access to spawn_subgraph
+    Epic 4.1 Update: Recursion is now handled via native LangGraph subgraphs,
+    not the legacy spawn_subgraph tool. Recursive nodes use worker_subgraph
+    which implements lightweight mini-orchestration.
+    """
+    print("🚀 Testing FORCED Recursive Subgraph (Native LangGraph)...")
+    
+    # Manually create a plan with a recursive Sub-Orchestrator node
+    # The recursive flag triggers worker_subgraph invocation
     mock_plan = {
         "nodes": [
             {
                 "id": "orchestrate_complex_task",
-                "agent_type": "Orchestrator",  # <-- This agent type CAN spawn subgraphs
-                "instruction": """You are given a complex multi-step task that CANNOT be completed in a single response.
+                "agent_type": "Sub-Orchestrator",  # Recursive orchestrator type
+                "instruction": """Build a complete Python REST API project structure with the following components:
+1. Database models for User and Product with SQLAlchemy
+2. CRUD endpoints for each model with FastAPI
+3. Authentication middleware with JWT tokens
+4. Unit tests for all endpoints with pytest
 
-TASK: Build a complete Python REST API project structure with the following components:
-1. Database models for User and Product
-2. CRUD endpoints for each model  
-3. Authentication middleware
-4. Unit tests for all endpoints
-
-This task is too complex for one agent. You MUST use the 'spawn_subgraph' tool to delegate this work.
-Call spawn_subgraph with a clear sub-task like: "Create Python SQLAlchemy models for User and Product entities"
-
-DO NOT attempt to complete this yourself. USE THE TOOL.""",
-                "dependencies": []
+Provide implementation details for each component.""",
+                "dependencies": [],
+                "recursive": True  # This triggers native worker_subgraph
             }
         ]
     }
@@ -65,16 +64,21 @@ DO NOT attempt to complete this yourself. USE THE TOOL.""",
             print(f"\n🔹 Node: {node_id}")
             print("-" * 40)
             
-            # Check if recursion was triggered
-            if "Recursion Result:" in output:
-                print("✅ RECURSION TRIGGERED!")
-                print(output[:1500] + "..." if len(output) > 1500 else output)
-            elif "DEPTH LIMIT REACHED" in output:
+            # Check if mini-orchestration was triggered (new native subgraph)
+            all_agents = result.get("all_agents", [])
+            mini_orchestrators = [a for a in all_agents if a.get("role") == "MiniOrchestrator"]
+            
+            if mini_orchestrators:
+                print("✅ NATIVE SUBGRAPH TRIGGERED (MiniOrchestrator)!")
+                print(f"   Child agents spawned: {len(all_agents)}")
+                for agent in all_agents[:5]:  # Show first 5
+                    print(f"   - {agent.get('id')}: {agent.get('role')} (depth {agent.get('depth')})")
+            elif "DEPTH LIMIT REACHED" in str(output) or "Depth limit" in str(output):
                 print("⚠️ Depth limit was reached")
-                print(output[:500])
+                print(str(output)[:500])
             else:
-                print("❌ No recursion detected in output")
-                print(output[:500] + "..." if len(output) > 500 else output)
+                print("❌ No mini-orchestration detected")
+                print(str(output)[:500] + "..." if len(str(output)) > 500 else str(output))
                 
     except Exception as e:
         print(f"❌ Error: {e}")
