@@ -2,6 +2,7 @@ from typing import Dict, Any
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from agents.dependencies import llm, TIER1_THRESHOLD
+from agents.cost import CostTrackingCallback, CostTracker
 
 async def simple_self_correct(instruction: str, output: str, previous_reasoning: str, agent_type: str, config: RunnableConfig = None) -> Dict[str, str]:
     """
@@ -37,11 +38,18 @@ Output ONLY the improved response content.
             HumanMessage(content=correction_prompt)
         ]
         
+        # Cost tracking setup
+        task_id = config.get("configurable", {}).get("thread_id") if config else None
+        cost_callback = CostTrackingCallback(task_id=task_id, node_name="self_correct")
+        llm_config: RunnableConfig = {"callbacks": [cost_callback]}
+        
         # Use the main LLM for correction to ensure high quality
-        if config:
-            response = await llm.ainvoke(messages, config=config)
-        else:
-            response = await llm.ainvoke(messages)
+        response = await llm.ainvoke(messages, config=llm_config)
+        
+        # Record costs to global tracker
+        tracker = CostTracker.get_instance()
+        for record in cost_callback.records:
+            tracker._add_record(record)
             
         return {"output": response.content}
     except Exception as e:

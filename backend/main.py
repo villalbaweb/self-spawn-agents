@@ -8,6 +8,7 @@ from agent import app_graph
 import json
 from agents.semantic_splitter import semantic_splitter_node
 from agents.shared_memory import init_checkpointer, close_checkpointer
+from agents.cost import CostTracker, CostTrackingCallback, BudgetExceededError
 
 import os
 
@@ -212,6 +213,46 @@ async def cancel_orchestrator(request_id: str):
         return {"status": "cancelled", "message": f"Task {request_id} has been requested to cancel."}
     
     return {"status": "not_found", "message": f"Task {request_id} not found."}
+
+# --- COST TRACKING API ---
+
+@app.get("/api/cost/summary")
+async def get_cost_summary(task_id: Optional[str] = None):
+    """
+    Get aggregated cost summary.
+    Optional task_id filter for per-task breakdown.
+    """
+    tracker = CostTracker.get_instance()
+    summary = tracker.get_summary(task_id)
+    return summary.model_dump()
+
+@app.get("/api/cost/records")
+async def get_cost_records(task_id: Optional[str] = None, limit: int = 100):
+    """
+    Get detailed cost records.
+    """
+    tracker = CostTracker.get_instance()
+    records = tracker.export_records(task_id)
+    return {"records": records[-limit:], "total": len(records)}
+
+@app.get("/api/run/{run_id}/cost")
+async def get_run_cost(run_id: str):
+    """
+    Get cost breakdown for a specific run.
+    """
+    tracker = CostTracker.get_instance()
+    summary = tracker.get_summary(run_id)
+    
+    return {
+        "run_id": run_id,
+        "total_cost_usd": summary.total_cost_usd,
+        "total_input_tokens": summary.total_input_tokens,
+        "total_output_tokens": summary.total_output_tokens,
+        "call_count": summary.call_count,
+        "by_type": summary.by_type,
+        "by_model": summary.by_model,
+        "by_node": summary.by_node,
+    }
 
 @app.get("/api/run/{run_id}/blueprint")
 async def get_blueprint(run_id: str):

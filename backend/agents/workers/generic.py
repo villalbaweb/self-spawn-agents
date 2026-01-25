@@ -2,6 +2,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from agents.dependencies import llm, llm_mini, TIER1_THRESHOLD, TIER2_THRESHOLD, TIER3_THRESHOLD
 from agents.evaluate_confidence import evaluate_confidence
 from langchain_core.runnables import RunnableConfig
+from agents.cost import CostTrackingCallback, CostTracker
 import re
 import time
 
@@ -50,11 +51,17 @@ async def generate_dynamic_system_prompt(instruction: str, agent_type: str, conf
         HumanMessage(content=meta_prompt)
     ]
     
-    # Pass config if provided
-    if config:
-        response = await llm_mini.ainvoke(messages, config=config)
-    else:
-        response = await llm_mini.ainvoke(messages)
+    # Cost tracking for prompt generation
+    task_id = config.get("configurable", {}).get("thread_id") if config else None
+    cost_callback = CostTrackingCallback(task_id=task_id, node_name="prompt_generation")
+    llm_config: RunnableConfig = {"callbacks": [cost_callback]}
+    
+    response = await llm_mini.ainvoke(messages, config=llm_config)
+    
+    # Record to global tracker
+    tracker = CostTracker.get_instance()
+    for record in cost_callback.records:
+        tracker._add_record(record)
         
     return response.content
 
@@ -99,6 +106,11 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
     # Inject depth into tool execution logic if needed
     current_depth = state.get("depth", 0)
     print(f"🤖 [GenericWorker] Processing for {agent_type} with depth {current_depth}")
+    
+    # Cost tracking setup
+    task_id = config.get("configurable", {}).get("thread_id") if config else None
+    cost_callback = CostTrackingCallback(task_id=task_id, node_name=f"worker_{agent_type.lower()}")
+    llm_config: RunnableConfig = {"callbacks": [cost_callback]}
 
     try:
         # Bind tools based on agent type
@@ -115,11 +127,8 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
             
         llm_with_tools = llm.bind_tools(tools) if tools else llm
         
-        # Pass config to LLM
-        if config:
-            response = await llm_with_tools.ainvoke(messages, config=config)
-        else:
-            response = await llm_with_tools.ainvoke(messages)
+        # Pass cost tracking config to LLM
+        response = await llm_with_tools.ainvoke(messages, config=llm_config)
         
         final_output = ""
         tools_available = []
@@ -229,8 +238,16 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
         if low_confidence_flag:
             warning = f"Low Confidence Warning: {(confidence_score * 100):.0f}% - {confidence_reasoning}"
 
+        # Record costs to global tracker
+        tracker = CostTracker.get_instance()
+        for record in cost_callback.records:
+            tracker._add_record(record)
+        worker_cost = cost_callback.get_total_cost()
+        print(f"💰 [worker_{agent_type.lower()}] Cost: ${worker_cost:.6f}")
+
         result_dict = {
             "output": final_output,
+            "usage_stats": cost_callback.to_usage_stats(),
             "metadata": {
                 "system_prompt": sys_prompt,
                 "agent_role": agent_type,
@@ -242,7 +259,8 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
                 "tools_available": tools_available,
                 "confidence_score": confidence_score,
                 "confidence_reasoning": confidence_reasoning,
-                "low_confidence_flag": low_confidence_flag
+                "low_confidence_flag": low_confidence_flag,
+                "cost_usd": worker_cost
             }
         }
         

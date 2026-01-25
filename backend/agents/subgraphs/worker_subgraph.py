@@ -32,6 +32,7 @@ from agents.subgraphs.state import WorkerState
 from agents.workers.generic import generic_worker_node
 from agents.evaluate_confidence import evaluate_confidence
 from agents.dependencies import MAX_RECURSION_DEPTH, llm_mini
+from agents.cost import CostTrackingCallback, CostTracker
 import asyncio
 import time
 import json
@@ -94,8 +95,20 @@ Output a JSON object with "tasks" array and "reasoning" string."""
             HumanMessage(content=plan_prompt)
         ]
         
+        # Cost tracking
+        task_id = config.get("configurable", {}).get("thread_id") if config else None
+        cost_callback = CostTrackingCallback(task_id=task_id, node_name="mini_planner")
+        llm_config: RunnableConfig = {"callbacks": [cost_callback]}
+        
         structured_llm = llm_mini.with_structured_output(MiniPlan)
-        plan = await structured_llm.ainvoke(messages, config=config) if config else await structured_llm.ainvoke(messages)
+        plan = await structured_llm.ainvoke(messages, config=llm_config)
+        
+        # Record to global tracker
+        tracker = CostTracker.get_instance()
+        for record in cost_callback.records:
+            tracker._add_record(record)
+        print(f"💰 [mini_planner] Cost: ${cost_callback.get_total_cost():.6f}")
+        
         return plan
         
     except Exception as e:

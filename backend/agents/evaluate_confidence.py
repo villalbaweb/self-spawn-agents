@@ -9,6 +9,7 @@ to detect "null result" failures (the "Phantom Protocol" fix).
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from agents.dependencies import llm_mini
+from agents.cost import CostTrackingCallback, CostTracker
 import re
 import json
 
@@ -51,10 +52,18 @@ Respond with ONLY a JSON object, no other text:
             SystemMessage(content="You are a quality evaluator. Output ONLY valid JSON."),
             HumanMessage(content=evaluation_prompt)
         ]
-        if config:
-            response = await llm_mini.ainvoke(messages, config=config)
-        else:
-            response = await llm_mini.ainvoke(messages)
+        
+        # Cost tracking setup
+        task_id = config.get("configurable", {}).get("thread_id") if config else None
+        cost_callback = CostTrackingCallback(task_id=task_id, node_name="evaluate_confidence")
+        llm_config: RunnableConfig = {"callbacks": [cost_callback]}
+        
+        response = await llm_mini.ainvoke(messages, config=llm_config)
+        
+        # Record costs to global tracker
+        tracker = CostTracker.get_instance()
+        for record in cost_callback.records:
+            tracker._add_record(record)
         
         # Parse JSON from response
         content = response.content.strip()
