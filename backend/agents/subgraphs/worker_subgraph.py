@@ -302,29 +302,57 @@ async def should_decompose(task: str, config: RunnableConfig = None) -> bool:
     """
     Quick check if task needs decomposition into sub-tasks.
     Uses heuristics first, then LLM if uncertain.
+    
+    IMPORTANT: Tasks marked recursive:true by supervisor should ALWAYS
+    pass through here and be decomposed. The supervisor already did
+    high-level analysis - trust its judgment.
     """
     task_lower = task.lower()
     
-    # Heuristic 1: Short tasks are usually simple
-    if len(task) < 150:
-        return False
-    
-    # Heuristic 2: Explicit multi-part indicators
-    multi_part_indicators = [
-        " and ", " with ", "multiple", "several", "various",
+    # Heuristic 1: Check for explicit multi-part indicators FIRST
+    # These trump the length check
+    strong_indicators = [
+        "oauth", "jwt", "rbac", "authentication", "authorization",
+        "multiple", "several", "components", "modules", "layers",
         "step 1", "step 2", "first,", "then,", "finally,",
-        "oauth", "jwt", "rbac",  # Auth complexity markers
-        "frontend", "backend", "database", "api"
+        "1.", "2.", "3.",  # Numbered lists
     ]
-    matches = sum(1 for indicator in multi_part_indicators if indicator in task_lower)
+    strong_matches = sum(1 for ind in strong_indicators if ind in task_lower)
     
-    if matches >= 3:
+    # If we have 2+ strong indicators, decompose regardless of length
+    if strong_matches >= 2:
+        print(f"   [should_decompose] TRUE - {strong_matches} strong indicators found")
         return True
-    if matches == 0:
+    
+    # Heuristic 2: Conjunction complexity (multiple things joined by 'and')
+    and_count = task_lower.count(" and ")
+    if and_count >= 2:
+        print(f"   [should_decompose] TRUE - {and_count} 'and' conjunctions (multi-part task)")
+        return True
+    
+    # Heuristic 3: Short tasks without indicators are simple
+    if len(task) < 100 and strong_matches == 0:
+        print(f"   [should_decompose] FALSE - short task ({len(task)} chars), no indicators")
         return False
     
-    # Uncertain - use quick LLM check
+    # Heuristic 4: Additional weak indicators
+    weak_indicators = [
+        " with ", "frontend", "backend", "database", "api",
+        "integration", "service", "system", "implement"
+    ]
+    weak_matches = sum(1 for ind in weak_indicators if ind in task_lower)
+    
+    total_matches = strong_matches + weak_matches
+    if total_matches >= 3:
+        print(f"   [should_decompose] TRUE - {total_matches} total indicators")
+        return True
+    if total_matches == 0:
+        print(f"   [should_decompose] FALSE - no complexity indicators")
+        return False
+    
+    # Uncertain (1-2 indicators) - use quick LLM check
     try:
+        print(f"   [should_decompose] Uncertain ({total_matches} indicators), asking LLM...")
         check_prompt = f"""Does this task need to be broken into 2+ parallel sub-tasks, or can ONE agent handle it?
 
 Task: {task[:500]}
@@ -336,9 +364,12 @@ Reply with ONLY "DECOMPOSE" or "SINGLE"."""
             HumanMessage(content=check_prompt)
         ]
         response = await llm_mini.ainvoke(messages, config=config) if config else await llm_mini.ainvoke(messages)
-        return "DECOMPOSE" in response.content.upper()
+        result = "DECOMPOSE" in response.content.upper()
+        print(f"   [should_decompose] LLM says: {'DECOMPOSE' if result else 'SINGLE'}")
+        return result
         
-    except Exception:
+    except Exception as e:
+        print(f"   [should_decompose] LLM check failed: {e}, defaulting to FALSE")
         return False  # Default to simple on error
 
 
