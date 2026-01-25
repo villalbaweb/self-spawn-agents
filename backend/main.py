@@ -233,7 +233,9 @@ async def get_cost_records(task_id: Optional[str] = None, limit: int = 100):
     """
     tracker = CostTracker.get_instance()
     records = tracker.export_records(task_id)
-    return {"records": records[-limit:], "total": len(records)}
+    # Ensure we return plain dicts (already serialized by export_records)
+    result_records = records[-limit:] if len(records) > limit else records
+    return {"records": result_records, "total": len(records)}
 
 @app.get("/api/run/{run_id}/cost")
 async def get_run_cost(run_id: str):

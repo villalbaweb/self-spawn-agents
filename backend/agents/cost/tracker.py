@@ -286,11 +286,11 @@ class CostTracker:
         return breakdown
     
     def get_cost_by_agent(self, task_id: Optional[str] = None) -> Dict[str, float]:
-        """Aggregate costs by agent."""
+        """Aggregate costs by agent (falls back to task_id if no agent_id)."""
         records = self.get_records_for_task(task_id) if task_id else self.records
         breakdown: Dict[str, float] = {}
         for record in records:
-            key = record.agent_id or "unattributed"
+            key = record.agent_id or record.task_id or "unattributed"
             breakdown[key] = breakdown.get(key, 0.0) + record.cost_usd
         return breakdown
     
@@ -331,8 +331,8 @@ class CostTracker:
             if record.model:
                 summary.by_model[record.model] = summary.by_model.get(record.model, 0.0) + record.cost_usd
             
-            # By agent
-            agent_key = record.agent_id or "unattributed"
+            # By agent (fall back to task_id if no agent_id)
+            agent_key = record.agent_id or record.task_id or "unattributed"
             summary.by_agent[agent_key] = summary.by_agent.get(agent_key, 0.0) + record.cost_usd
             
             # By node

@@ -60,29 +60,50 @@ class CostTrackingCallback(BaseCallbackHandler):
         """
         Called when LLM call completes. Extracts token usage and calculates cost.
         """
-        if not response.llm_output:
-            return
+        input_tokens = 0
+        output_tokens = 0
+        cached_tokens = 0
+        model = "unknown"
         
-        # Extract token usage from response
-        usage = response.llm_output.get("token_usage", {})
-        if not usage:
-            # Try alternative location (some providers)
-            usage = response.llm_output.get("usage", {})
+        # Primary extraction: from llm_output (works for most cases)
+        if response.llm_output:
+            usage = response.llm_output.get("token_usage", {})
+            if not usage:
+                usage = response.llm_output.get("usage", {})
+            
+            input_tokens = usage.get("prompt_tokens", 0) or usage.get("input_tokens", 0)
+            output_tokens = usage.get("completion_tokens", 0) or usage.get("output_tokens", 0)
+            cached_tokens = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0) if isinstance(usage.get("prompt_tokens_details"), dict) else 0
+            
+            model = response.llm_output.get("model_name", "unknown")
+            if model == "unknown":
+                model = response.llm_output.get("model", "unknown")
         
-        input_tokens = usage.get("prompt_tokens", 0) or usage.get("input_tokens", 0)
-        output_tokens = usage.get("completion_tokens", 0) or usage.get("output_tokens", 0)
-        cached_tokens = usage.get("prompt_tokens_details", {}).get("cached_tokens", 0)
+        # Fallback: Check generations for usage_metadata (newer LangChain/tool-calling flows)
+        if input_tokens == 0 and output_tokens == 0 and response.generations:
+            try:
+                for gen_list in response.generations:
+                    for gen in gen_list:
+                        # Check for usage_metadata on the message (AIMessage)
+                        if hasattr(gen, 'message') and hasattr(gen.message, 'usage_metadata'):
+                            usage_meta = gen.message.usage_metadata
+                            if usage_meta:
+                                input_tokens = getattr(usage_meta, 'input_tokens', 0) or 0
+                                output_tokens = getattr(usage_meta, 'output_tokens', 0) or 0
+                                # Get model from response_metadata
+                                if hasattr(gen.message, 'response_metadata') and gen.message.response_metadata:
+                                    model = gen.message.response_metadata.get('model_name', model)
+                                break
+                    if input_tokens > 0 or output_tokens > 0:
+                        break
+            except Exception:
+                pass  # Don't break on fallback extraction errors
         
         if input_tokens == 0 and output_tokens == 0:
-            return  # No usage data
+            return  # No usage data found
         
-        # Extract model name
-        model = response.llm_output.get("model_name", "unknown")
-        if model == "unknown":
-            model = response.llm_output.get("model", "unknown")
-        
-        # Detect provider from model or metadata
-        provider = self._detect_provider(model, response.llm_output)
+        # Detect provider from model
+        provider = self._detect_provider(model, response.llm_output or {})
         
         # Calculate cost
         cost = ModelPricing.calculate_cost(
@@ -133,7 +154,7 @@ class CostTrackingCallback(BaseCallbackHandler):
             return "deepseek"
         
         return "unknown"
-    
+
     def get_total_cost(self) -> float:
         """Get total cost across all recorded LLM calls."""
         with self._lock:

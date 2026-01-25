@@ -198,17 +198,18 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
         execution_time = time.time() - start_time
         
         # --- TIER 1: CONFIDENCE CHECK & SELF-CORRECTION ---
-        confidence_eval = await evaluate_confidence(instruction, final_output, config)
+        # Pass task_id for consistent cost attribution
+        confidence_eval = await evaluate_confidence(instruction, final_output, config, root_task_id=task_id)
         confidence_score = confidence_eval["confidence_score"]
         confidence_reasoning = confidence_eval["confidence_reasoning"]
         
         if confidence_score < TIER1_THRESHOLD:
              # Trigger self-correction (Tier 1)
-             correction_result = await simple_self_correct(instruction, final_output, confidence_reasoning, agent_type, config)
+             correction_result = await simple_self_correct(instruction, final_output, confidence_reasoning, agent_type, config, root_task_id=task_id)
              final_output = correction_result["output"]
              
              # Re-evaluate confidence
-             confidence_eval = await evaluate_confidence(instruction, final_output, config)
+             confidence_eval = await evaluate_confidence(instruction, final_output, config, root_task_id=task_id)
              confidence_score = confidence_eval["confidence_score"]
              confidence_reasoning = f"[Self-Corrected] {confidence_eval['confidence_reasoning']}"
 
@@ -250,10 +251,12 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
 
         # Record costs to global tracker
         tracker = CostTracker.get_instance()
+        print(f"💰 [worker_{agent_type.lower()}] Callback has {len(cost_callback.records)} records to merge")
         for record in cost_callback.records:
             tracker._add_record(record)
+            print(f"💰 [worker_{agent_type.lower()}] Merged record: task_id={record.task_id}, node={record.node_name}, cost=${record.cost_usd:.6f}")
         worker_cost = cost_callback.get_total_cost()
-        print(f"💰 [worker_{agent_type.lower()}] Cost: ${worker_cost:.6f}")
+        print(f"💰 [worker_{agent_type.lower()}] Total Cost: ${worker_cost:.6f}, Tracker now has {len(tracker.records)} records")
 
         result_dict = {
             "output": final_output,

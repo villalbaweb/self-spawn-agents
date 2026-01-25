@@ -53,6 +53,22 @@ class CostRecord:
     
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary for JSON/state storage."""
+        # Sanitize metadata to ensure all values are JSON-serializable
+        safe_metadata = {}
+        for k, v in (self.metadata or {}).items():
+            if v is None or isinstance(v, (str, int, float, bool)):
+                safe_metadata[k] = v
+            elif isinstance(v, (list, dict)):
+                # Convert nested structures to string to be safe
+                try:
+                    import json
+                    json.dumps(v)  # Test if serializable
+                    safe_metadata[k] = v
+                except (TypeError, ValueError):
+                    safe_metadata[k] = str(v)
+            else:
+                safe_metadata[k] = str(v)
+        
         return {
             "type": self.type.value,
             "cost_usd": self.cost_usd,
@@ -66,7 +82,7 @@ class CostRecord:
             "output_tokens": self.output_tokens,
             "cached_tokens": self.cached_tokens,
             "tool_name": self.tool_name,
-            "metadata": self.metadata,
+            "metadata": safe_metadata,
         }
     
     @classmethod

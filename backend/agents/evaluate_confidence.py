@@ -14,10 +14,16 @@ import re
 import json
 
 
-async def evaluate_confidence(instruction: str, output: str, config: RunnableConfig = None) -> dict:
+async def evaluate_confidence(instruction: str, output: str, config: RunnableConfig = None, root_task_id: str = None) -> dict:
     """
     Uses the LLM to evaluate the quality and confidence of an agent's output.
     Returns a dict with 'confidence_score' (0.0-1.0) and 'confidence_reasoning'.
+    
+    Args:
+        instruction: The original instruction given to the agent
+        output: The agent's output to evaluate
+        config: Optional RunnableConfig with thread_id
+        root_task_id: Optional root task ID for cost attribution (overrides config thread_id)
     """
     evaluation_prompt = f"""Evaluate how well the following output addresses the given instruction.
     
@@ -53,8 +59,8 @@ Respond with ONLY a JSON object, no other text:
             HumanMessage(content=evaluation_prompt)
         ]
         
-        # Cost tracking setup
-        task_id = config.get("configurable", {}).get("thread_id") if config else None
+        # Cost tracking setup - prefer root_task_id for consistent attribution
+        task_id = root_task_id or (config.get("configurable", {}).get("thread_id") if config else None)
         cost_callback = CostTrackingCallback(task_id=task_id, node_name="evaluate_confidence")
         llm_config: RunnableConfig = {"callbacks": [cost_callback]}
         

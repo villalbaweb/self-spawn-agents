@@ -167,7 +167,7 @@ async def execute_mini_plan(
             needs_sub_decomposition = False
             
             if can_recurse:
-                needs_sub_decomposition = await should_decompose(mini_task.instruction, config)
+                needs_sub_decomposition = await should_decompose(mini_task.instruction, config, root_task_id=root_task_id)
             
             if needs_sub_decomposition:
                 # --- RECURSIVE PATH: Spawn child worker_subgraph ---
@@ -313,7 +313,7 @@ async def execute_mini_plan(
 
 # --- COMPLEXITY ANALYSIS ---
 
-async def should_decompose(task: str, config: RunnableConfig = None) -> bool:
+async def should_decompose(task: str, config: RunnableConfig = None, root_task_id: str = None) -> bool:
     """
     Quick check if task needs decomposition into sub-tasks.
     Uses heuristics first, then LLM if uncertain.
@@ -321,6 +321,11 @@ async def should_decompose(task: str, config: RunnableConfig = None) -> bool:
     IMPORTANT: Tasks marked recursive:true by supervisor should ALWAYS
     pass through here and be decomposed. The supervisor already did
     high-level analysis - trust its judgment.
+    
+    Args:
+        task: The task to analyze
+        config: RunnableConfig for LLM calls
+        root_task_id: Task ID for cost attribution
     """
     task_lower = task.lower()
     
@@ -378,7 +383,18 @@ Reply with ONLY "DECOMPOSE" or "SINGLE"."""
             SystemMessage(content="You classify task complexity. One word answer only."),
             HumanMessage(content=check_prompt)
         ]
-        response = await llm_mini.ainvoke(messages, config=config) if config else await llm_mini.ainvoke(messages)
+        
+        # Cost tracking - use root_task_id for consistent attribution
+        cost_callback = CostTrackingCallback(task_id=root_task_id, node_name="complexity_check")
+        llm_config: RunnableConfig = {"callbacks": [cost_callback]}
+        
+        response = await llm_mini.ainvoke(messages, config=llm_config)
+        
+        # Record to global tracker
+        tracker = CostTracker.get_instance()
+        for record in cost_callback.records:
+            tracker._add_record(record)
+        
         result = "DECOMPOSE" in response.content.upper()
         print(f"   [should_decompose] LLM says: {'DECOMPOSE' if result else 'SINGLE'}")
         return result
@@ -403,6 +419,7 @@ async def execute_node(state: WorkerState, config: RunnableConfig = None) -> Dic
     subject = state.get("subject", "")
     parent_id = state.get("parent_node_id", "worker")
     current_depth = state.get("depth", 0)
+    root_task_id = state.get("root_task_id")  # For cost attribution
     
     print(f"🔧 [WorkerSubgraph] Processing at depth {current_depth}: {task[:80]}...")
     
@@ -464,13 +481,13 @@ async def execute_node(state: WorkerState, config: RunnableConfig = None) -> Dic
     
     # --- DECIDE EXECUTION PATH ---
     start_time = time.time()
-    needs_decomposition = await should_decompose(task, config)
+    needs_decomposition = await should_decompose(task, config, root_task_id=root_task_id)
     
     if needs_decomposition and current_depth < MAX_RECURSION_DEPTH - 1:
         # --- PATH A: MINI-ORCHESTRATION ---
         print(f"🔀 [WorkerSubgraph] Complex task detected, creating mini-plan...")
         
-        plan = await create_mini_plan(task, subject, config)
+        plan = await create_mini_plan(task, subject, root_task_id=root_task_id, config=config)
         print(f"📋 [WorkerSubgraph] Plan: {len(plan.tasks)} tasks - {plan.reasoning[:50]}")
         
         # Pass self-reference for recursive spawning capability
@@ -505,11 +522,13 @@ async def execute_node(state: WorkerState, config: RunnableConfig = None) -> Dic
         if subject:
             enriched_task = f"<subject>{subject}</subject>\n\n<task>\n{task}\n</task>"
         
+        # root_task_id already extracted at start of function
         worker_state = {
             "depth": current_depth,
             "subject": subject,
             "budget_config": budget_config,
-            "usage_stats": usage_stats
+            "usage_stats": usage_stats,
+            "root_task_id": root_task_id
         }
         
         try:
@@ -561,6 +580,7 @@ async def validate_node(state: WorkerState, config: RunnableConfig = None) -> Di
     parent_id = state.get("parent_node_id", "worker")
     results = state.get("results", {})
     task = state.get("task", "")
+    root_task_id = state.get("root_task_id")
     
     output = results.get(parent_id, "")
     
@@ -571,7 +591,7 @@ async def validate_node(state: WorkerState, config: RunnableConfig = None) -> Di
     print(f"🔍 [WorkerSubgraph] Validating output quality...")
     
     try:
-        evaluation = await evaluate_confidence(task, output, config)
+        evaluation = await evaluate_confidence(task, output, config, root_task_id=root_task_id)
         return {
             "confidence_score": evaluation.get("confidence_score", 0.5),
             "confidence_reasoning": evaluation.get("confidence_reasoning", "")
