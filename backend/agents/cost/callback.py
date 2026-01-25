@@ -88,18 +88,40 @@ class CostTrackingCallback(BaseCallbackHandler):
                         if hasattr(gen, 'message') and hasattr(gen.message, 'usage_metadata'):
                             usage_meta = gen.message.usage_metadata
                             if usage_meta:
-                                input_tokens = getattr(usage_meta, 'input_tokens', 0) or 0
-                                output_tokens = getattr(usage_meta, 'output_tokens', 0) or 0
+                                if isinstance(usage_meta, dict):
+                                    input_tokens = usage_meta.get('input_tokens', 0) or 0
+                                    output_tokens = usage_meta.get('output_tokens', 0) or 0
+                                else:
+                                    input_tokens = getattr(usage_meta, 'input_tokens', 0) or 0
+                                    output_tokens = getattr(usage_meta, 'output_tokens', 0) or 0
+                                    
                                 # Get model from response_metadata
                                 if hasattr(gen.message, 'response_metadata') and gen.message.response_metadata:
                                     model = gen.message.response_metadata.get('model_name', model)
                                 break
                     if input_tokens > 0 or output_tokens > 0:
                         break
-            except Exception:
-                pass  # Don't break on fallback extraction errors
+            except Exception as e:
+                print(f"⚠️ [CostTrackingCallback] Fallback 1 failed: {e}")
         
+        # Fallback 2: Check response_metadata on the first generation (common for certain providers)
+        if input_tokens == 0 and output_tokens == 0 and response.generations:
+            try:
+                first_gen = response.generations[0][0]
+                meta = first_gen.message.response_metadata if hasattr(first_gen, 'message') and hasattr(first_gen.message, 'response_metadata') else {}
+                if not meta and hasattr(first_gen, 'generation_info'):
+                    meta = first_gen.generation_info or {}
+                
+                usage = meta.get("token_usage") or meta.get("usage") or {}
+                if usage:
+                    input_tokens = usage.get("prompt_tokens") or usage.get("input_tokens") or 0
+                    output_tokens = usage.get("completion_tokens") or usage.get("output_tokens") or 0
+                    model = meta.get("model_name") or model
+            except Exception:
+                pass
+
         if input_tokens == 0 and output_tokens == 0:
+            print(f"⚠️ [CostTrackingCallback] No usage data found for run {run_id}. response.llm_output={response.llm_output}")
             return  # No usage data found
         
         # Detect provider from model

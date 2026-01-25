@@ -70,7 +70,7 @@ async def generate_dynamic_system_prompt(instruction: str, agent_type: str, conf
     for record in cost_callback.records:
         tracker._add_record(record)
         
-    return response.content
+    return response.content, cost_callback.to_usage_stats()
 
 from agents.tools.web_search import web_search
 from agents.tools.python_repl import python_repl
@@ -92,10 +92,16 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
     # Prefer root_task_id from state (for subgraph attribution), fall back to config thread_id
     task_id = state.get("root_task_id") or (config.get("configurable", {}).get("thread_id") if config else None)
     
+    # Initialize usage_stats_update early to avoid UnboundLocalError
+    usage_stats_update = {"cost": 0.0, "input_tokens": 0, "output_tokens": 0, "llm_calls": 0}
+    
     # Generate dynamic system prompt (keeping existing logic)
     try:
-        sys_prompt = await generate_dynamic_system_prompt(instruction, agent_type, config, root_task_id=task_id)
+        sys_prompt, prompt_usage = await generate_dynamic_system_prompt(instruction, agent_type, config, root_task_id=task_id)
         if not sys_prompt: raise ValueError("Empty system prompt")
+        # Merge prompt generation usage
+        for k, v in prompt_usage.items():
+            usage_stats_update[k] = usage_stats_update.get(k, 0) + v
     except Exception as e:
         print(f"⚠️ Failed to generate dynamic prompt ({e}). Using fallback.")
         sys_prompt = f"""<role>Expert {agent_type}</role>
@@ -199,19 +205,36 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
         
         # --- TIER 1: CONFIDENCE CHECK & SELF-CORRECTION ---
         # Pass task_id for consistent cost attribution
-        confidence_eval = await evaluate_confidence(instruction, final_output, config, root_task_id=task_id)
-        confidence_score = confidence_eval["confidence_score"]
-        confidence_reasoning = confidence_eval["confidence_reasoning"]
+        confidence_res, val_usage = await evaluate_confidence(instruction, final_output, config, root_task_id=task_id)
+        confidence_score = confidence_res["confidence_score"]
+        confidence_reasoning = confidence_res["confidence_reasoning"]
+        
+        # Update usage_stats_update from the primary callback
+        primary_usage = cost_callback.to_usage_stats()
+        for k, v in primary_usage.items():
+            usage_stats_update[k] = usage_stats_update.get(k, 0) + v
+        
+        # Merge evaluation usage
+        for k, v in val_usage.items():
+            usage_stats_update[k] = usage_stats_update.get(k, 0) + v
         
         if confidence_score < TIER1_THRESHOLD:
              # Trigger self-correction (Tier 1)
-             correction_result = await simple_self_correct(instruction, final_output, confidence_reasoning, agent_type, config, root_task_id=task_id)
-             final_output = correction_result["output"]
+             correction_res = await simple_self_correct(instruction, final_output, confidence_reasoning, agent_type, config, root_task_id=task_id)
+             final_output = correction_res["output"]
+             
+             # Merge correction usage
+             for k, v in correction_res.get("usage_stats", {}).items():
+                 usage_stats_update[k] = usage_stats_update.get(k, 0) + v
              
              # Re-evaluate confidence
-             confidence_eval = await evaluate_confidence(instruction, final_output, config, root_task_id=task_id)
-             confidence_score = confidence_eval["confidence_score"]
-             confidence_reasoning = f"[Self-Corrected] {confidence_eval['confidence_reasoning']}"
+             confidence_res, val_usage2 = await evaluate_confidence(instruction, final_output, config, root_task_id=task_id)
+             confidence_score = confidence_res["confidence_score"]
+             confidence_reasoning = f"[Self-Corrected] {confidence_res['confidence_reasoning']}"
+             
+             # Merge usage from second evaluation
+             for k, v in val_usage2.items():
+                 usage_stats_update[k] = usage_stats_update.get(k, 0) + v
 
         # --- TIER 3: HARD STOP (HITL) ---
         if confidence_score < TIER3_THRESHOLD:
@@ -251,16 +274,21 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
 
         # Record costs to global tracker
         tracker = CostTracker.get_instance()
-        print(f"💰 [worker_{agent_type.lower()}] Callback has {len(cost_callback.records)} records to merge")
-        for record in cost_callback.records:
+        records = cost_callback.records
+        print(f"💰 [worker_{agent_type.lower()}] Callback has {len(records)} records to merge")
+        for record in records:
+            # Ensure task_id is set before merging
+            if not record.task_id:
+                record.task_id = task_id
             tracker._add_record(record)
             print(f"💰 [worker_{agent_type.lower()}] Merged record: task_id={record.task_id}, node={record.node_name}, cost=${record.cost_usd:.6f}")
+        
         worker_cost = cost_callback.get_total_cost()
         print(f"💰 [worker_{agent_type.lower()}] Total Cost: ${worker_cost:.6f}, Tracker now has {len(tracker.records)} records")
 
         result_dict = {
             "output": final_output,
-            "usage_stats": cost_callback.to_usage_stats(),
+            "usage_stats": usage_stats_update,
             "metadata": {
                 "system_prompt": sys_prompt,
                 "agent_role": agent_type,

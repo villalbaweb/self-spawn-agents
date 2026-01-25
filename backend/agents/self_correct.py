@@ -59,7 +59,7 @@ Output ONLY the improved response content.
         for record in cost_callback.records:
             tracker._add_record(record)
             
-        return {"output": response.content}
+        return {"output": response.content, "usage_stats": cost_callback.to_usage_stats()}
     except Exception as e:
         print(f"⚠️ Self-correction failed: {e}")
-        return {"output": output} # Fallback to original
+        return {"output": output, "usage_stats": {}} # Fallback to original

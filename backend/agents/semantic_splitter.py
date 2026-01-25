@@ -68,4 +68,4 @@ async def semantic_splitter_node(state: AgentState, config: RunnableConfig = Non
         }
     except Exception as e:
         print(f"❌ Error in semantic_splitter_node: {e}")
-        return {"subtasks": [], "subject": "", "deliverables": []}
+        return {"subtasks": [], "subject": "", "deliverables": [], "usage_stats": {}}

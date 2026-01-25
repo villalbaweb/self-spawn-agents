@@ -105,7 +105,7 @@ Respond with ONLY a JSON object, no other text:
         return {
             "confidence_score": score,
             "confidence_reasoning": reasoning
-        }
+        }, cost_callback.to_usage_stats()
     except Exception as e:
         print(f"⚠️ Confidence evaluation failed: {e}")
-        return {"confidence_score": 0.5, "confidence_reasoning": f"Evaluation error: {str(e)}"}
+        return {"confidence_score": 0.5, "confidence_reasoning": f"Evaluation error: {str(e)}"}, {}

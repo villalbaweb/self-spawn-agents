@@ -108,7 +108,7 @@ Output a JSON object with "tasks" array and "reasoning" string."""
             tracker._add_record(record)
         print(f"💰 [mini_planner] Cost: ${cost_callback.get_total_cost():.6f}")
         
-        return plan
+        return plan, cost_callback.to_usage_stats()
         
     except Exception as e:
         print(f"⚠️ [MiniPlanner] Failed to create plan: {e}")
@@ -116,14 +116,15 @@ Output a JSON object with "tasks" array and "reasoning" string."""
         return MiniPlan(
             tasks=[MiniTask(id="fallback_research", agent_type="Researcher", instruction=task)],
             reasoning=f"Fallback due to planning error: {e}"
-        )
+        ), {}
 
 
 async def execute_mini_plan(
     plan: MiniPlan, 
     state: WorkerState, 
     config: RunnableConfig = None,
-    subgraph_ref = None  # Lazy reference to avoid circular import
+    subgraph_ref = None,  # Lazy reference to avoid circular import
+    initial_usage: Dict[str, float] = None
 ) -> Dict[str, Any]:
     """
     Execute all tasks in the mini-plan in parallel.
@@ -142,6 +143,7 @@ async def execute_mini_plan(
     budget_config = state.get("budget_config") or {}
     usage_stats = state.get("usage_stats") or {}
     root_task_id = state.get("root_task_id", "")
+    node_usage = initial_usage or {}
     
     print(f"🔀 [MiniOrchestrator] Executing {len(plan.tasks)} parallel tasks at depth {current_depth}...")
     
@@ -183,8 +185,12 @@ async def execute_mini_plan(
                     "all_agents": [],
                     "all_edges": [],
                     "global_signal": state.get("global_signal"),
-                    "usage_stats": usage_stats,
-                    "budget_config": budget_config,
+                    "usage_stats": {}, # Child will return its own delta
+                    "budget_config": {
+                        **budget_config,
+                        "external_cost": (state.get("usage_stats", {}).get("cost", 0.0) + 
+                                         node_usage.get("cost", 0.0))
+                    },
                 }
                 
                 sub_result = await subgraph_ref.ainvoke(child_state, config)
@@ -199,6 +205,7 @@ async def execute_mini_plan(
                 return {
                     "task_id": mini_task.id,
                     "output": output,
+                    "usage_stats": sub_result.get("usage_stats", {}),
                     "agent_data": {
                         "id": task_id,
                         "role": f"{mini_task.agent_type} (subgraph)",
@@ -239,6 +246,7 @@ async def execute_mini_plan(
                 return {
                     "task_id": mini_task.id,
                     "output": output,
+                    "usage_stats": result.get("usage_stats", {}),
                     "agent_data": {
                         "id": task_id,
                         "role": mini_task.agent_type,
@@ -280,10 +288,19 @@ async def execute_mini_plan(
     all_outputs = {}
     all_agents = []
     all_edges = []
+    usage_stats = {"steps": len(plan.tasks)}
     
     for r in results:
         all_outputs[r["task_id"]] = r["output"]
         all_agents.append(r["agent_data"])
+        
+        # Merge usage stats from this task
+        task_usage = r.get("usage_stats", {})
+        for key, val in task_usage.items():
+            if key in usage_stats:
+                usage_stats[key] += val
+            else:
+                usage_stats[key] = val
         
         # Include child agents/edges from recursive spawns
         all_agents.extend(r.get("child_agents", []))
@@ -299,15 +316,15 @@ async def execute_mini_plan(
     
     # Combine outputs into summary
     combined_output = "\n\n---\n\n".join([
-        f"**{task_id}**:\n{output}" 
-        for task_id, output in all_outputs.items()
+        f"**{t_id}**:\n{output}" 
+        for t_id, output in all_outputs.items()
     ])
     
     return {
         "output": combined_output,
         "all_agents": all_agents,
         "all_edges": all_edges,
-        "usage_stats": {"steps": len(plan.tasks)}
+        "usage_stats": usage_stats
     }
 
 
@@ -342,18 +359,18 @@ async def should_decompose(task: str, config: RunnableConfig = None, root_task_i
     # If we have 2+ strong indicators, decompose regardless of length
     if strong_matches >= 2:
         print(f"   [should_decompose] TRUE - {strong_matches} strong indicators found")
-        return True
+        return True, {}
     
     # Heuristic 2: Conjunction complexity (multiple things joined by 'and')
     and_count = task_lower.count(" and ")
     if and_count >= 2:
         print(f"   [should_decompose] TRUE - {and_count} 'and' conjunctions (multi-part task)")
-        return True
+        return True, {}
     
     # Heuristic 3: Short tasks without indicators are simple
     if len(task) < 100 and strong_matches == 0:
         print(f"   [should_decompose] FALSE - short task ({len(task)} chars), no indicators")
-        return False
+        return False, {}
     
     # Heuristic 4: Additional weak indicators
     weak_indicators = [
@@ -365,10 +382,10 @@ async def should_decompose(task: str, config: RunnableConfig = None, root_task_i
     total_matches = strong_matches + weak_matches
     if total_matches >= 3:
         print(f"   [should_decompose] TRUE - {total_matches} total indicators")
-        return True
+        return True, {}
     if total_matches == 0:
         print(f"   [should_decompose] FALSE - no complexity indicators")
-        return False
+        return False, {}
     
     # Uncertain (1-2 indicators) - use quick LLM check
     try:
@@ -397,11 +414,11 @@ Reply with ONLY "DECOMPOSE" or "SINGLE"."""
         
         result = "DECOMPOSE" in response.content.upper()
         print(f"   [should_decompose] LLM says: {'DECOMPOSE' if result else 'SINGLE'}")
-        return result
+        return result, cost_callback.to_usage_stats()
         
     except Exception as e:
         print(f"   [should_decompose] LLM check failed: {e}, defaulting to FALSE")
-        return False  # Default to simple on error
+        return False, {} # Default to simple on error
 
 
 # --- MAIN EXECUTION NODE ---
@@ -461,7 +478,8 @@ async def execute_node(state: WorkerState, config: RunnableConfig = None) -> Dic
     budget_config = state.get("budget_config") or {}
     usage_stats = state.get("usage_stats") or {}
     max_cost = budget_config.get("max_cost")
-    current_cost = usage_stats.get("cost", 0.0)
+    current_cost = (budget_config.get("external_cost", 0.0) + 
+                    usage_stats.get("cost", 0.0))
     
     if max_cost is not None and current_cost >= max_cost:
         print(f"💰 [WorkerSubgraph] Budget limit reached: ${current_cost:.2f}")
@@ -481,18 +499,27 @@ async def execute_node(state: WorkerState, config: RunnableConfig = None) -> Dic
     
     # --- DECIDE EXECUTION PATH ---
     start_time = time.time()
-    needs_decomposition = await should_decompose(task, config, root_task_id=root_task_id)
+    needs_decomposition, decomp_usage = await should_decompose(task, config, root_task_id=root_task_id)
     
+    # Track node-local usage (deltas)
+    node_usage = {}
+    for k, v in decomp_usage.items():
+        node_usage[k] = node_usage.get(k, 0) + v
+
     if needs_decomposition and current_depth < MAX_RECURSION_DEPTH - 1:
         # --- PATH A: MINI-ORCHESTRATION ---
         print(f"🔀 [WorkerSubgraph] Complex task detected, creating mini-plan...")
         
-        plan = await create_mini_plan(task, subject, root_task_id=root_task_id, config=config)
+        plan, plan_usage = await create_mini_plan(task, subject, root_task_id=root_task_id, config=config)
         print(f"📋 [WorkerSubgraph] Plan: {len(plan.tasks)} tasks - {plan.reasoning[:50]}")
+        
+        # Merge planner usage
+        for k, v in plan_usage.items():
+            node_usage[k] = node_usage.get(k, 0) + v
         
         # Pass self-reference for recursive spawning capability
         # worker_subgraph is defined at module level, available after compilation
-        result = await execute_mini_plan(plan, state, config, subgraph_ref=_get_compiled_subgraph())
+        result = await execute_mini_plan(plan, state, config, subgraph_ref=_get_compiled_subgraph(), initial_usage=node_usage)
         execution_time = time.time() - start_time
         
         # Create orchestrator agent record
@@ -507,9 +534,14 @@ async def execute_node(state: WorkerState, config: RunnableConfig = None) -> Dic
             "orchestration_mode": "mini"
         }
         
+        # Aggregate usage from mini-plan (mini-plan summary already includes all child usage)
+        final_usage = dict(node_usage)
+        for k, v in result["usage_stats"].items():
+            final_usage[k] = final_usage.get(k, 0) + v
+
         return {
             "results": {parent_id: result["output"]},
-            "usage_stats": result["usage_stats"],
+            "usage_stats": final_usage,
             "all_agents": [orchestrator_agent] + result["all_agents"],
             "all_edges": result["all_edges"]
         }
@@ -527,7 +559,7 @@ async def execute_node(state: WorkerState, config: RunnableConfig = None) -> Dic
             "depth": current_depth,
             "subject": subject,
             "budget_config": budget_config,
-            "usage_stats": usage_stats,
+            "usage_stats": state.get("usage_stats", {}), # Pass current total for internal budget checks
             "root_task_id": root_task_id
         }
         
@@ -550,9 +582,18 @@ async def execute_node(state: WorkerState, config: RunnableConfig = None) -> Dic
                 "orchestration_mode": "direct"
             }
             
+            # Combine complexity check usage with worker usage
+            final_usage = dict(node_usage)
+            worker_usage = result.get("usage_stats", {})
+            for k, v in worker_usage.items():
+                final_usage[k] = final_usage.get(k, 0) + v
+            
+            # Ensure steps is incremented correctly (1 step for the worker)
+            final_usage["steps"] = final_usage.get("steps", 0) + 1
+
             return {
                 "results": {parent_id: output},
-                "usage_stats": {"steps": 1, "cost": meta.get("estimated_cost", 0.01)},
+                "usage_stats": final_usage,
                 "all_agents": [agent_data],
                 "all_edges": []
             }
@@ -591,10 +632,11 @@ async def validate_node(state: WorkerState, config: RunnableConfig = None) -> Di
     print(f"🔍 [WorkerSubgraph] Validating output quality...")
     
     try:
-        evaluation = await evaluate_confidence(task, output, config, root_task_id=root_task_id)
+        evaluation, val_usage = await evaluate_confidence(task, output, config, root_task_id=root_task_id)
         return {
             "confidence_score": evaluation.get("confidence_score", 0.5),
-            "confidence_reasoning": evaluation.get("confidence_reasoning", "")
+            "confidence_reasoning": evaluation.get("confidence_reasoning", ""),
+            "usage_stats": val_usage
         }
     except Exception as e:
         print(f"⚠️ [WorkerSubgraph] Validation error: {e}")

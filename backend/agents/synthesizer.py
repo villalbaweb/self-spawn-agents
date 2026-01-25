@@ -93,4 +93,4 @@ Research Results:
         return {"synthesis": output, "usage_stats": cost_callback.to_usage_stats()}
     except Exception as e:
         print(f"❌ Error in synthesizer_node: {e}")
-        return {"synthesis": f"Error generating synthesis: {str(e)}"}
+        return {"synthesis": f"Error generating synthesis: {str(e)}", "usage_stats": {}}
