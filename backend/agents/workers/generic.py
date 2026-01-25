@@ -6,10 +6,16 @@ from agents.cost import CostTrackingCallback, CostTracker
 import re
 import time
 
-async def generate_dynamic_system_prompt(instruction: str, agent_type: str, config: RunnableConfig = None) -> str:
+async def generate_dynamic_system_prompt(instruction: str, agent_type: str, config: RunnableConfig = None, root_task_id: str = None) -> str:
     """
     Generates a personalized system prompt using a faster/cheaper LLM.
     Includes information about available tools based on agent type.
+    
+    Args:
+        instruction: The task instruction to generate a prompt for
+        agent_type: Type of agent (orchestrator, researcher, coder)
+        config: Optional RunnableConfig with thread_id
+        root_task_id: Optional root task ID for cost attribution (overrides config thread_id)
     """
     # Define tool context based on agent type
     tool_context = ""
@@ -52,7 +58,8 @@ async def generate_dynamic_system_prompt(instruction: str, agent_type: str, conf
     ]
     
     # Cost tracking for prompt generation
-    task_id = config.get("configurable", {}).get("thread_id") if config else None
+    # Prefer root_task_id for consistent attribution, fall back to config thread_id
+    task_id = root_task_id or (config.get("configurable", {}).get("thread_id") if config else None)
     cost_callback = CostTrackingCallback(task_id=task_id, node_name="prompt_generation")
     llm_config: RunnableConfig = {"callbacks": [cost_callback]}
     
@@ -81,9 +88,13 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
     """
     print(f"🤖 {agent_type} working on: {instruction}")
     
+    # Extract task_id early for consistent cost attribution across all LLM calls
+    # Prefer root_task_id from state (for subgraph attribution), fall back to config thread_id
+    task_id = state.get("root_task_id") or (config.get("configurable", {}).get("thread_id") if config else None)
+    
     # Generate dynamic system prompt (keeping existing logic)
     try:
-        sys_prompt = await generate_dynamic_system_prompt(instruction, agent_type, config)
+        sys_prompt = await generate_dynamic_system_prompt(instruction, agent_type, config, root_task_id=task_id)
         if not sys_prompt: raise ValueError("Empty system prompt")
     except Exception as e:
         print(f"⚠️ Failed to generate dynamic prompt ({e}). Using fallback.")
@@ -107,8 +118,7 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
     current_depth = state.get("depth", 0)
     print(f"🤖 [GenericWorker] Processing for {agent_type} with depth {current_depth}")
     
-    # Cost tracking setup
-    task_id = config.get("configurable", {}).get("thread_id") if config else None
+    # Cost tracking setup - reuse task_id extracted earlier for consistent attribution
     cost_callback = CostTrackingCallback(task_id=task_id, node_name=f"worker_{agent_type.lower()}")
     llm_config: RunnableConfig = {"callbacks": [cost_callback]}
 

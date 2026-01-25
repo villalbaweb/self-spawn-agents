@@ -70,7 +70,7 @@ class MiniPlan(BaseModel):
     reasoning: str = Field(..., description="Brief explanation of the plan")
 
 
-async def create_mini_plan(task: str, subject: str, config: RunnableConfig = None) -> MiniPlan:
+async def create_mini_plan(task: str, subject: str, root_task_id: str = None, config: RunnableConfig = None) -> MiniPlan:
     """
     Lightweight planner that creates 2-4 parallel tasks.
     Much simpler than full supervisor - no dependencies, no recursive flags.
@@ -95,9 +95,8 @@ Output a JSON object with "tasks" array and "reasoning" string."""
             HumanMessage(content=plan_prompt)
         ]
         
-        # Cost tracking
-        task_id = config.get("configurable", {}).get("thread_id") if config else None
-        cost_callback = CostTrackingCallback(task_id=task_id, node_name="mini_planner")
+        # Cost tracking - use root_task_id for consistent attribution
+        cost_callback = CostTrackingCallback(task_id=root_task_id, node_name="mini_planner")
         llm_config: RunnableConfig = {"callbacks": [cost_callback]}
         
         structured_llm = llm_mini.with_structured_output(MiniPlan)
@@ -142,6 +141,7 @@ async def execute_mini_plan(
     subject = state.get("subject", "")
     budget_config = state.get("budget_config") or {}
     usage_stats = state.get("usage_stats") or {}
+    root_task_id = state.get("root_task_id", "")
     
     print(f"🔀 [MiniOrchestrator] Executing {len(plan.tasks)} parallel tasks at depth {current_depth}...")
     
@@ -177,6 +177,7 @@ async def execute_mini_plan(
                     "task": mini_task.instruction,
                     "subject": subject,
                     "parent_node_id": task_id,
+                    "root_task_id": root_task_id,
                     "depth": next_depth,
                     "results": {},
                     "all_agents": [],
@@ -220,7 +221,8 @@ async def execute_mini_plan(
                     "depth": current_depth,
                     "subject": subject,
                     "budget_config": budget_config,
-                    "usage_stats": usage_stats
+                    "usage_stats": usage_stats,
+                    "root_task_id": root_task_id
                 }
                 
                 result = await generic_worker_node(

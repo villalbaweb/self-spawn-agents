@@ -36,6 +36,7 @@ class WorkerState(TypedDict):
     task: str                                           # The specific instruction for this worker
     subject: str                                        # Subject context (for drift prevention)
     parent_node_id: str                                 # ID of the parent node that spawned this
+    root_task_id: str                                   # Original task_id from parent graph (for cost attribution)
     
     # Execution tracking
     depth: Annotated[int, replace]                      # Current recursion depth

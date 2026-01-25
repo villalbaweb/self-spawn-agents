@@ -102,6 +102,9 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 if context_parts:
                     enriched_task = _instr + "\n\nContext:\n" + "\n".join(context_parts)
                 
+                # Extract root_task_id for cost attribution
+                root_task_id = config.get("configurable", {}).get("thread_id", "") if config else ""
+                
                 # --- INVOKE NATIVE WORKER SUBGRAPH ---
                 # Uses lightweight mini-planner instead of full app_graph
                 # Flow: execute (with optional mini-plan) → validate
@@ -109,6 +112,7 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                     "task": enriched_task,
                     "subject": s.get("subject", ""),
                     "parent_node_id": _id,
+                    "root_task_id": root_task_id,
                     "depth": current_depth + 1,
                     "results": {},
                     "all_agents": [],
