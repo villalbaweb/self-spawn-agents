@@ -185,7 +185,7 @@ flowchart TB
 ### Feature 5: Safety Logic (Phase 2)
 - **Atomic Persistence:** State checks saved after *every node*. Crash recovery is instant.
 - **Zombie Branch Pruning:** If Sibling A fails (Tier 3), Sibling B (parallel) is immediately killed to save tokens.
-- **Budget Caps:** Hard limits on `max_cost` and `max_steps`.
+- **Budget Caps:** Hard limits on `max_cost` and `max_steps`. **100% Parity Achieved** via the "Delta Pattern," ensuring subgraphs return only incremental costs to the parent state.
 
 ### Feature 6: Time Machine (Phase 2)
 - **Hydration:** Clone any past run into a fresh thread.
@@ -230,7 +230,8 @@ Surgically rewind a run from a specific node.
 ## Next Steps (Epic 3: Optics)
 
 - [x] **Tier 2 Warning Badges**: Display "Yellow" status for low-confidence nodes in UI.
-- [ ] **Real-Time Cost Badge**: Stream `usage_stats.cost` to the UI Header.
+- [x] **Real-Time Cost Backend**: achieve 100% parity between `AgentState` and `CostTracker`.
+- [ ] **Real-Time Cost Badge (UI)**: Stream the now-accurate `usage_stats.cost` to the UI Header.
 
 ---
 
