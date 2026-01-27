@@ -26,23 +26,22 @@ This document details the components of **Epic 3: User Optics & Polish**, contra
 
 ---
 
-## 3.2 Real-Time Cost Badge - [BACKEND COMPLETE / UI PENDING]
+## 3.2 Real-Time Cost Badge - [IMPLEMENTED]
 
 **Objective:** Give users immediate feedback on the financial cost of their agentic run.
 
-### Current Behavior ("The Taxometer Backend Ready")
+### Current Behavior ("The Taxometer Live")
 *   **Mechanism:** **100% Cost Parity Achieved.** The `AgentState` now perfectly matches the global `CostTracker` and external traces (LangSmith).
-*   **User View:** The backend is ready to stream accurate data, but no visible cost tracking is yet in the UI.
-*   **Risk:** Token anxiety is still present until the UI badge is implemented.
-*   **Feedback Loop:** Backend is precise, UI needs to expose it.
+*   **User View:** Live streaming cost badge in the header with 8-decimal precision.
+*   **Outcome:** Token anxiety is eliminated with precise, real-time financial transparency.
 
 ### Expected Behavior ("The Taxometer UI")
 *   **Mechanism:**
     1.  **Backend (COMPLETED):** Every LLM call execution (via LangChain callbacks) aggregates tokens used into `state.usage_stats`.
     2.  **Calculation (COMPLETED):** 100% accurate USD conversion for GPT-4o, GPT-4o-mini, and others including cached tokens.
-    3.  **Frontend (PENDING):** A "Cost Badge" in the Header updates live via SSE.
-*   **Visual:** `Running... | Cost: $0.12` -> `Running... | Cost: $0.14` ... (Standardizing look and feel).
+    3.  **Frontend (COMPLETED):** A "Cost Badge" in the Header updates live via SSE with 8-decimal precision.
+*   **Visual:** `Running... | $ COST $0.00620250` (Verified 100% parity with LangSmith).
 *   **Outcome:**
-    *   Reduces anxiety.
+    *   Reduces anxiety with exact financial feedback.
     *   Gamifies efficiency (users try to write better prompts to lower costs).
-    *   Essential for B2B billing transparency.
+    *   Essential for B2B billing transparency and audit trails.

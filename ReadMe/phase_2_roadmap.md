@@ -25,8 +25,8 @@ Focus: Trust and Transparency.
     - [x] Update Backend to emit "Tier 2 Warnings" in SSE events.
     - [x] Update Frontend Node component to display Yellow Warning badges.
 - [x] **3.2 Real-Time Cost Badge** <!-- id: 6 -->
-    - [x] **Backend**: Calculate 100% accurate cost during execution (100% Parity check).
-    - [x] **Frontend**: Streaming update to UI Header with premium badges.
+    - [x] **Backend**: Calculate 100% accurate cost during execution (Verified with LangSmith Parity).
+    - [x] **Frontend**: Streaming update to UI Header with high-precision (8-decimal) cost badges.
 
 ## Epic 4: Maintenance & Optimization
 - [x] **4.1 Refactor Subgraph to Native LangGraph** <!-- id: 7 -->
