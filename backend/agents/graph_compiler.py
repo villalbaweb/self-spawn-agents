@@ -157,22 +157,26 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 # We only want to draw edges to immediate children (depth + 1) to form a tree.
                 # Grandchildren will have edges from their respective parents in sub_edges.
                 
+                seen_child_ids = set()
                 for sub_agent in sub_agents:
                     # Set parent node for compound node rendering (avoid self-parenting)
                     if sub_agent["id"] != _id:
-                         # Backend logic: Propagate parent ID to all descendants for compound node grouping if needed
-                         if "parent" not in sub_agent or not sub_agent["parent"]:
+                        # Backend logic: Propagate parent ID to all descendants for compound node grouping if needed
+                        if "parent" not in sub_agent or not sub_agent["parent"]:
                             sub_agent["parent"] = _id
 
-                         # Visualization logic: Only draw EDGE to direct children
-                         # (Check depth to avoid connecting to grandchildren)
-                         if sub_agent.get("depth") == current_depth + 1:
-                            hierarchy_edges.append({
-                                "source": _id, 
-                                "target": sub_agent["id"],
-                                "depth": current_depth, 
-                                "type": "hierarchy"
-                            })
+                        # Visualization logic: Only draw EDGE to direct children
+                        # (Check depth to avoid connecting to grandchildren)
+                        # Also prevent duplicate edges if sub_agents has duplicate IDs (e.g. status updates)
+                        if sub_agent.get("depth") == current_depth + 1:
+                            if sub_agent["id"] not in seen_child_ids:
+                                hierarchy_edges.append({
+                                    "source": _id, 
+                                    "target": sub_agent["id"],
+                                    "depth": current_depth, 
+                                    "type": "hierarchy"
+                                })
+                                seen_child_ids.add(sub_agent["id"])
 
 
                 # Create parent orchestrator agent record

@@ -436,13 +436,22 @@ function App() {
     }));
 
     // Filter out edges that reference non-existent nodes to prevent Cytoscape crash
+    // AND Deduplicate edges (prevent multiple arrows between same agents)
+    const seenEdges = new Set<string>();
     const validEdges = edges.filter((edge) => {
+      const uniqueKey = `${edge.source}|${edge.target}`;
+      if (seenEdges.has(uniqueKey)) {
+        return false;
+      }
+
       const sourceExists = validNodeIds.has(edge.source);
       const targetExists = validNodeIds.has(edge.target);
       if (!sourceExists || !targetExists) {
-        console.warn(`Skipping edge: source=${edge.source} (${sourceExists ? 'exists' : 'missing'}), target=${edge.target} (${targetExists ? 'exists' : 'missing'})`);
+        // console.warn(`Skipping edge: source=${edge.source} (${sourceExists ? 'exists' : 'missing'}), target=${edge.target} (${targetExists ? 'exists' : 'missing'})`);
         return false;
       }
+
+      seenEdges.add(uniqueKey);
       return true;
     });
 
