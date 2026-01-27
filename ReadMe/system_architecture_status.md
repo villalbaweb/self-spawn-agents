@@ -74,7 +74,7 @@
     *   Standardized `GraphBlueprint` JSON emission.
     *   Live node status updates (Running, Success, Error).
     *   **Active:** Tier 2 Warning Badges (Yellow "!" for low confidence).
-    *   **Pending Phase 2b:** Real-time Cost Badge ($) in Header. (Backend cost calculation is now 100% accurate; UI implementation is pending).
+    *   **Active:** Real-time Cost Badge ($) in Header. (100% accurate live streaming).
 
 ### Module 8: Interactive Refinement (Human-in-the-Loop)
 *   **Status:** ✅ **Operational**

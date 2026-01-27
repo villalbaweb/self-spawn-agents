@@ -120,6 +120,8 @@ async def run_orchestrator(request: OrchestratorRequest):
                     output = event.get("data", {}).get("output")
                     if output and isinstance(output, dict):
                         latest_state.update(output)
+                        if "usage_stats" in latest_state:
+                            yield f"data: {json.dumps({'type': 'usage_stats', 'stats': latest_state['usage_stats']})}\n\n"
 
                 # We care about when nodes start for progress logs
                 if kind == "on_chain_start" and name in ["semantic_splitter", "supervisor", "graph_compiler", "confidence_check", "synthesizer"]:
@@ -321,6 +323,11 @@ async def get_run_state(run_id: str):
             if synthesis:
                 yield f"data: {json.dumps({'type': 'synthesis', 'markdown': synthesis})}\n\n"
             
+            # Emit usage stats if present
+            usage_stats = values.get("usage_stats")
+            if usage_stats:
+                yield f"data: {json.dumps({'type': 'usage_stats', 'stats': usage_stats})}\n\n"
+
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
         except Exception as e:
