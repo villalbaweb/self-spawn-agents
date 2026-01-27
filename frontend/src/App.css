@@ -159,6 +159,59 @@ body {
   background: #575fcf;
 }
 
+/* Performance Stats Header Section */
+.performance-stats {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 6px 16px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  margin-left: auto;
+  /* Push to the right */
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.stat-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: #808e9b;
+  letter-spacing: 0.5px;
+  margin-bottom: 2px;
+}
+
+.stat-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: #dcdde1;
+  font-family: 'Consolas', 'Monaco', monospace;
+  white-space: nowrap;
+  transition: all 0.3s ease;
+}
+
+.stat-item.cost .stat-value {
+  color: #0be881;
+}
+
+.stat-divider {
+  width: 1px;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.cached-badge {
+  font-size: 10px;
+  color: #48dbfb;
+  margin-left: 6px;
+  font-weight: 400;
+}
+
 .error-banner {
   background: #ff5e57;
   color: white;

@@ -2,8 +2,10 @@ import json
 from typing import List, Dict, Any
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.runnables import RunnableConfig
 from agents.dependencies import llm
 from agents.state import AgentState
+from agents.cost import CostTrackingCallback, CostTracker
 
 # Define the structured output model
 class SubtaskList(BaseModel):
@@ -11,13 +13,18 @@ class SubtaskList(BaseModel):
     subtasks: List[str] = Field(..., description="A list of atomic subtasks (max 5) starting with a verb.")
     deliverables: List[str] = Field(default_factory=list, description="Explicit outputs requested (e.g., 'Marketing Roadmap', 'Executive Summary PDF', 'Python script')")
 
-async def semantic_splitter_node(state: AgentState) -> Dict[str, Any]:
+async def semantic_splitter_node(state: AgentState, config: RunnableConfig = None) -> Dict[str, Any]:
     """
     Decompose a high-level task into atomic subtasks using LLM semantics.
     Also extracts the primary subject and required deliverables.
     """
     task = state.get("task", "") or state.get("query", "")
     print(f"🧠 Decomposing: {task}")
+    
+    # Cost tracking setup
+    task_id = config.get("configurable", {}).get("thread_id") if config else None
+    cost_callback = CostTrackingCallback(task_id=task_id, node_name="semantic_splitter")
+    llm_config: RunnableConfig = {"callbacks": [cost_callback]}
     
     # Improved prompt with subject and deliverables extraction + search optimization
     sys_prompt = """<role>Expert Task Decomposer</role>
@@ -43,10 +50,23 @@ async def semantic_splitter_node(state: AgentState) -> Dict[str, Any]:
     try:
         # Use structured output for reliability
         structured_llm = llm.with_structured_output(SubtaskList)
-        response = await structured_llm.ainvoke(messages)
+        response = await structured_llm.ainvoke(messages, config=llm_config)
         print(f"📌 Extracted Subject: {response.subject}")
         print(f"📦 Expected Deliverables: {response.deliverables}")
-        return {"subtasks": response.subtasks, "subject": response.subject, "deliverables": response.deliverables}
+        
+        # Record costs to global tracker
+        tracker = CostTracker.get_instance()
+        for record in cost_callback.records:
+            tracker._add_record(record)
+        print(f"💰 [semantic_splitter] Cost: ${cost_callback.get_total_cost():.6f}")
+        
+        return {
+            "subtasks": response.subtasks, 
+            "subject": response.subject, 
+            "deliverables": response.deliverables,
+            "root_task_id": task_id,
+            "usage_stats": cost_callback.to_usage_stats()
+        }
     except Exception as e:
         print(f"❌ Error in semantic_splitter_node: {e}")
-        return {"subtasks": [], "subject": "", "deliverables": []}
+        return {"subtasks": [], "subject": "", "deliverables": [], "usage_stats": {}}

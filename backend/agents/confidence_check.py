@@ -24,17 +24,12 @@ async def confidence_check_node(state: AgentState) -> Dict[str, Any]:
     if review_required:
         print(f"⏸️ [HITL] Pause for Human Review (Confidence: {aggregate_confidence:.2f})")
         # interrupt() will pause execution and return the value sent during resume
-        try:
-            user_response = interrupt({
-                "type": "review_required",
-                "confidence_score": aggregate_confidence,
-                "message": f"Execution paused: Aggregate confidence ({aggregate_confidence:.2f}) is below threshold ({CONFIDENCE_THRESHOLD})."
-            })
-            print(f"✅ [HITL] Resume received: {user_response}")
-        except Exception as e:
-            # Handle cases where interrupt might not be supported (e.g., no checkpointer)
-            print(f"⚠️ Interrupt failed: {e}")
-            pass
+        user_response = interrupt({
+            "type": "review_required",
+            "confidence_score": aggregate_confidence,
+            "message": f"Execution paused: Aggregate confidence ({aggregate_confidence:.2f}) is below threshold ({CONFIDENCE_THRESHOLD})."
+        })
+        print(f"✅ [HITL] Resume received: {user_response}")
 
         return {
             "confidence_score": aggregate_confidence,

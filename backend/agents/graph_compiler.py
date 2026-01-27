@@ -102,6 +102,10 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 if context_parts:
                     enriched_task = _instr + "\n\nContext:\n" + "\n".join(context_parts)
                 
+                # Extract root_task_id for cost attribution
+                # Prefer root_task_id from state (passed down from parent), fall back to config
+                root_task_id = s.get("root_task_id") or (config.get("configurable", {}).get("thread_id", "") if config else "")
+                
                 # --- INVOKE NATIVE WORKER SUBGRAPH ---
                 # Uses lightweight mini-planner instead of full app_graph
                 # Flow: execute (with optional mini-plan) → validate
@@ -109,13 +113,17 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                     "task": enriched_task,
                     "subject": s.get("subject", ""),
                     "parent_node_id": _id,
+                    "root_task_id": root_task_id,
                     "depth": current_depth + 1,
                     "results": {},
                     "all_agents": [],
                     "all_edges": [],
                     "global_signal": s.get("global_signal", ""),
-                    "usage_stats": usage_stats,
-                    "budget_config": budget_config,
+                    "usage_stats": {}, # Use empty for subgraph to return ONLY the delta
+                    "budget_config": {
+                        **(s.get("budget_config") or {}),
+                        "external_cost": (s.get("usage_stats") or {}).get("cost", 0.0)
+                    },
                     "confidence_score": 0.0,
                     "confidence_reasoning": ""
                 }
@@ -164,17 +172,20 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                     "confidence_score": confidence
                 }
                 
-                # Propagate usage from subgraph
+                # Propagate usage from subgraph (Properly merge all keys)
                 usage_update = {"steps": 1}
                 for key, val in sub_usage.items():
-                    usage_update[key] = usage_update.get(key, 0) + val
+                    if key in usage_update:
+                        usage_update[key] += val
+                    else:
+                        usage_update[key] = val
                 
                 # Check if subgraph triggered interrupt
                 global_signal = final_sub_state.get("global_signal", "")
 
                 return_data = {
                     "results": {_id: result_output},
-                    "metadata": {_id: {"agent_role": "SubOrchestrator", "confidence_score": confidence}},
+                    "metadata": {_id: {"agent_role": "SubOrchestrator", "confidence_score": confidence, "cost_usd": sub_usage.get("cost", 0.0)}},
                     "all_agents": [parent_agent] + sub_agents,
                     "all_edges": hierarchy_edges + sub_edges,
                     "usage_stats": usage_update
@@ -262,10 +273,15 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                     if key in meta:
                         agent_data[key] = meta[key]
 
-                # --- POST-EXECUTION: Track usage stats ---
-                # Estimate cost from tokens if available, otherwise increment step count
-                step_cost = meta.get("estimated_cost", 0.01)  # Default small cost per step
+                # Use actual cost tracked by callback if available
+                step_cost = meta.get("cost_usd") or meta.get("estimated_cost", 0.0)
                 usage_update = {"steps": 1, "cost": step_cost}
+                
+                # Merge full usage stats from result (tokens, calls, etc)
+                if "usage_stats" in result:
+                    for key, val in result["usage_stats"].items():
+                        if key != "steps": # handled above
+                            usage_update[key] = val
                 
                 # --- TIER 2 WARNING: Budget approaching limit ---
                 warning_message = None
@@ -435,8 +451,12 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 "all_agents": [],
                 "all_edges": [{"source": e.source, "target": e.target, "depth": state.get("depth", 0)} for e in blueprint_edges],
                 # Pass budget config and usage stats for enforcement
-                "budget_config": state.get("budget_config") or {},
-                "usage_stats": state.get("usage_stats") or {}
+                "usage_stats": {}, # Start empty to return only the delta
+                "budget_config": {
+                    **(state.get("budget_config") or {}),
+                    "external_cost": (state.get("usage_stats") or {}).get("cost", 0.0)
+                },
+                "root_task_id": state.get("root_task_id")
             }
              try:
                 await app.ainvoke(initial_dynamic_state, config=inner_config)

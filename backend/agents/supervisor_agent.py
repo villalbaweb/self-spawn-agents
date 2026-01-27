@@ -1,8 +1,10 @@
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.runnables import RunnableConfig
 from agents.dependencies import llm
 from agents.state import AgentState
+from agents.cost import CostTrackingCallback, CostTracker
 
 # --- 1. Graph Schema Definition ---
 
@@ -19,7 +21,7 @@ class GraphPlan(BaseModel):
 
 # --- 2. Supervisor Node Logic ---
 
-async def supervisor_node(state: AgentState) -> Dict[str, Any]:
+async def supervisor_node(state: AgentState, config: RunnableConfig = None) -> Dict[str, Any]:
     """
     Takes atomic subtasks and generates a structured LangGraph plan.
     """
@@ -31,6 +33,11 @@ async def supervisor_node(state: AgentState) -> Dict[str, Any]:
     if not subtasks:
         print("⚠️ No subtasks found to plan.")
         return {"graph_plan": {}}
+    
+    # Cost tracking setup
+    task_id = config.get("configurable", {}).get("thread_id") if config else None
+    cost_callback = CostTrackingCallback(task_id=task_id, node_name="supervisor")
+    llm_config: RunnableConfig = {"callbacks": [cost_callback]}
 
     sys_prompt = """<role>System Architect & Planner</role>
 <objective>Map the provided subtasks into a structured execution graph of Agents.</objective>
@@ -73,11 +80,20 @@ SAFEGUARDS:
 
     try:
         structured_llm = llm.with_structured_output(GraphPlan)
-        plan: GraphPlan = await structured_llm.ainvoke(messages)
+        plan: GraphPlan = await structured_llm.ainvoke(messages, config=llm_config)
+        
+        # Record costs to global tracker
+        tracker = CostTracker.get_instance()
+        for record in cost_callback.records:
+            tracker._add_record(record)
+        print(f"💰 [supervisor] Cost: ${cost_callback.get_total_cost():.6f}")
         
         # Convert pydantic model to dict for state storage
-        return {"graph_plan": plan.model_dump()}
+        return {
+            "graph_plan": plan.model_dump(),
+            "usage_stats": cost_callback.to_usage_stats()
+        }
         
     except Exception as e:
         print(f"❌ Error in supervisor_node: {e}")
-        return {"graph_plan": {}}
+        return {"graph_plan": {}, "usage_stats": cost_callback.to_usage_stats()}

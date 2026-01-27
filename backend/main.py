@@ -8,6 +8,7 @@ from agent import app_graph
 import json
 from agents.semantic_splitter import semantic_splitter_node
 from agents.shared_memory import init_checkpointer, close_checkpointer
+from agents.cost import CostTracker, CostTrackingCallback, BudgetExceededError
 
 import os
 
@@ -92,7 +93,17 @@ async def run_orchestrator(request: OrchestratorRequest):
                 "task": request.task, 
                 "subtasks": [],
                 "subject": "",
-                "deliverables": []
+                "deliverables": [],
+                "root_task_id": req_id,
+                "usage_stats": {
+                    "cost": 0.0,
+                    "input_tokens": 0.0,
+                    "output_tokens": 0.0,
+                    "cached_tokens": 0.0,
+                    "llm_calls": 0.0,
+                    "tool_calls": 0.0,
+                    "steps": 0.0
+                }
             }
             
             # Pass thread_id to support checkpointers/HITL
@@ -109,6 +120,8 @@ async def run_orchestrator(request: OrchestratorRequest):
                     output = event.get("data", {}).get("output")
                     if output and isinstance(output, dict):
                         latest_state.update(output)
+                        if "usage_stats" in latest_state:
+                            yield f"data: {json.dumps({'type': 'usage_stats', 'stats': latest_state['usage_stats']})}\n\n"
 
                 # We care about when nodes start for progress logs
                 if kind == "on_chain_start" and name in ["semantic_splitter", "supervisor", "graph_compiler", "confidence_check", "synthesizer"]:
@@ -153,8 +166,16 @@ async def run_orchestrator(request: OrchestratorRequest):
                     }) + "\n\n"
 
             # --- STREAM ENDED ---
-            # Emit final results from the total accumulated state
-            print(f"🏁 Stream ended. Captured state keys: {list(latest_state.keys())}")
+            # Fetch the actual final state from the checkpointer to ensure all updates (including the last node) are captured
+            final_graph_state = await app_graph.aget_state(config)
+            if final_graph_state and final_graph_state.values:
+                latest_state = final_graph_state.values
+                print(f"🏁 Stream ended. Final state captured from checkpointer.")
+            else:
+                print(f"🏁 Stream ended. Falling back to latest_state accumulator.")
+
+            print(f"📊 Final Captured Cost: ${latest_state.get('usage_stats', {}).get('cost', 0):.6f}")
+            print(f"Captured state keys: {list(latest_state.keys())}")
             
             subtasks = latest_state.get("subtasks", [])
             graph_plan = latest_state.get("graph_plan", {})
@@ -213,6 +234,48 @@ async def cancel_orchestrator(request_id: str):
     
     return {"status": "not_found", "message": f"Task {request_id} not found."}
 
+# --- COST TRACKING API ---
+
+@app.get("/api/cost/summary")
+async def get_cost_summary(task_id: Optional[str] = None):
+    """
+    Get aggregated cost summary.
+    Optional task_id filter for per-task breakdown.
+    """
+    tracker = CostTracker.get_instance()
+    summary = tracker.get_summary(task_id)
+    return summary.model_dump()
+
+@app.get("/api/cost/records")
+async def get_cost_records(task_id: Optional[str] = None, limit: int = 100):
+    """
+    Get detailed cost records.
+    """
+    tracker = CostTracker.get_instance()
+    records = tracker.export_records(task_id)
+    # Ensure we return plain dicts (already serialized by export_records)
+    result_records = records[-limit:] if len(records) > limit else records
+    return {"records": result_records, "total": len(records)}
+
+@app.get("/api/run/{run_id}/cost")
+async def get_run_cost(run_id: str):
+    """
+    Get cost breakdown for a specific run.
+    """
+    tracker = CostTracker.get_instance()
+    summary = tracker.get_summary(run_id)
+    
+    return {
+        "run_id": run_id,
+        "total_cost_usd": summary.total_cost_usd,
+        "total_input_tokens": summary.total_input_tokens,
+        "total_output_tokens": summary.total_output_tokens,
+        "call_count": summary.call_count,
+        "by_type": summary.by_type,
+        "by_model": summary.by_model,
+        "by_node": summary.by_node,
+    }
+
 @app.get("/api/run/{run_id}/blueprint")
 async def get_blueprint(run_id: str):
     """
@@ -260,6 +323,11 @@ async def get_run_state(run_id: str):
             if synthesis:
                 yield f"data: {json.dumps({'type': 'synthesis', 'markdown': synthesis})}\n\n"
             
+            # Emit usage stats if present
+            usage_stats = values.get("usage_stats")
+            if usage_stats:
+                yield f"data: {json.dumps({'type': 'usage_stats', 'stats': usage_stats})}\n\n"
+
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
         except Exception as e:

@@ -35,4 +35,5 @@ class AgentState(TypedDict):
     # Safety Logic (Epic 1)
     global_signal: Annotated[str, replace] # Global interrupt signal ("INTERRUPT" to stop siblings)
     usage_stats: Annotated[Dict[str, float], sum_usage] # Accumulated cost/tokens/steps
+    root_task_id: str # Primary task ID for cost attribution across subgraphs
     budget_config: Dict[str, float] # Limits: {"max_cost": 2.0, "max_steps": 50}

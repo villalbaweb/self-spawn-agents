@@ -36,6 +36,16 @@ interface EdgeInfo {
   depth?: number;
 }
 
+interface UsageStats {
+  cost: number;
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  llm_calls: number;
+  tool_calls: number;
+  steps: number;
+}
+
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 function App() {
@@ -55,6 +65,15 @@ function App() {
   const [allAgents, setAllAgents] = useState<AgentInfo[]>([]);
   const [showRefine, setShowRefine] = useState<boolean>(false);
   const [refinementText, setRefinementText] = useState<string>('');
+  const [usageStats, setUsageStats] = useState<UsageStats>({
+    cost: 0,
+    input_tokens: 0,
+    output_tokens: 0,
+    cached_tokens: 0,
+    llm_calls: 0,
+    tool_calls: 0,
+    steps: 0
+  });
 
   // Specific Node Editing State
   const [isEditing, setIsEditing] = useState<boolean>(false);
@@ -109,6 +128,9 @@ function App() {
             else if (data.type === 'progress') {
               setLogs(prev => [...prev, `[LOG] ${data.message}`]);
             }
+            else if (data.type === 'usage_stats') {
+              setUsageStats(data.stats);
+            }
             else if (data.type === 'unified_graph') {
               setLogs(prev => [...prev, `[SUCCESS] Unified Graph received: ${data.agents.length} agents`]);
               renderUnifiedGraph(data.agents, data.edges);
@@ -151,6 +173,15 @@ function App() {
     setAllAgents([]);
     setIsInterrupted(false);
     setCurrentRunId(null);
+    setUsageStats({
+      cost: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      cached_tokens: 0,
+      llm_calls: 0,
+      tool_calls: 0,
+      steps: 0
+    });
 
     try {
       const response = await fetch(`${API_URL}/api/run`, {
@@ -532,6 +563,28 @@ function App() {
             </button>
           )}
         </div>
+
+        <div className="performance-stats">
+          <div className="stat-item cost" title="Total estimated cost">
+            <span className="stat-label">$ COST</span>
+            <span className="stat-value">${usageStats.cost.toFixed(8)}</span>
+          </div>
+          <div className="stat-divider"></div>
+          <div className="stat-item tokens" title="Input / Output (Cached)">
+            <span className="stat-label">TOKENS</span>
+            <span className="stat-value">
+              {usageStats.input_tokens.toLocaleString()} / {usageStats.output_tokens.toLocaleString()}
+              {usageStats.cached_tokens > 0 && (
+                <span className="cached-badge">({usageStats.cached_tokens.toLocaleString()} cached)</span>
+              )}
+            </span>
+          </div>
+          <div className="stat-divider"></div>
+          <div className="stat-item calls" title="LLM / Tool Calls / Steps">
+            <span className="stat-label">CALLS</span>
+            <span className="stat-value">{usageStats.llm_calls} LLM | {usageStats.tool_calls} Tool | {usageStats.steps} Steps</span>
+          </div>
+        </div>
       </header>
 
       {error && <div className="error-banner">{error}</div>}
@@ -673,7 +726,7 @@ function App() {
                     <button
                       className="metric"
                       onClick={() => {
-                        if (!confirm("Start new run from this point?")) return;
+                        if (!currentRunId || !selectedAgent || !confirm("Start new run from this point?")) return;
                         handleForkRun(currentRunId, selectedAgent.id);
                       }}
                       style={{ cursor: 'pointer', border: 'none', background: 'transparent', color: '#e67e22', marginLeft: '10px' }}
@@ -714,8 +767,8 @@ function App() {
                       <button
                         className="hitl-btn refine"
                         onClick={() => {
-                          if (!confirm("Start new run from this point with modified instruction?")) return;
-                          handleForkRun(currentRunId!, selectedAgent.id, { new_instruction: editInstruction });
+                          if (!currentRunId || !selectedAgent || !confirm("Start new run from this point with modified instruction?")) return;
+                          handleForkRun(currentRunId, selectedAgent.id, { new_instruction: editInstruction });
                           setIsEditing(false);
                         }}
                         style={{ fontSize: '11px', padding: '4px 8px', backgroundColor: '#e67e22' }}
