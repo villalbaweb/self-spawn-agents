@@ -96,4 +96,4 @@ SAFEGUARDS:
         
     except Exception as e:
         print(f"❌ Error in supervisor_node: {e}")
-        return {"graph_plan": {}}
+        return {"graph_plan": {}, "usage_stats": cost_callback.to_usage_stats()}

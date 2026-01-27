@@ -93,7 +93,17 @@ async def run_orchestrator(request: OrchestratorRequest):
                 "task": request.task, 
                 "subtasks": [],
                 "subject": "",
-                "deliverables": []
+                "deliverables": [],
+                "root_task_id": req_id,
+                "usage_stats": {
+                    "cost": 0.0,
+                    "input_tokens": 0.0,
+                    "output_tokens": 0.0,
+                    "cached_tokens": 0.0,
+                    "llm_calls": 0.0,
+                    "tool_calls": 0.0,
+                    "steps": 0.0
+                }
             }
             
             # Pass thread_id to support checkpointers/HITL
@@ -154,8 +164,16 @@ async def run_orchestrator(request: OrchestratorRequest):
                     }) + "\n\n"
 
             # --- STREAM ENDED ---
-            # Emit final results from the total accumulated state
-            print(f"🏁 Stream ended. Captured state keys: {list(latest_state.keys())}")
+            # Fetch the actual final state from the checkpointer to ensure all updates (including the last node) are captured
+            final_graph_state = await app_graph.aget_state(config)
+            if final_graph_state and final_graph_state.values:
+                latest_state = final_graph_state.values
+                print(f"🏁 Stream ended. Final state captured from checkpointer.")
+            else:
+                print(f"🏁 Stream ended. Falling back to latest_state accumulator.")
+
+            print(f"📊 Final Captured Cost: ${latest_state.get('usage_stats', {}).get('cost', 0):.6f}")
+            print(f"Captured state keys: {list(latest_state.keys())}")
             
             subtasks = latest_state.get("subtasks", [])
             graph_plan = latest_state.get("graph_plan", {})

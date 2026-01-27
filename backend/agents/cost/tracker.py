@@ -319,6 +319,7 @@ class CostTracker:
             total_cost_usd=sum(r.cost_usd for r in records),
             total_input_tokens=sum(r.input_tokens for r in records),
             total_output_tokens=sum(r.output_tokens for r in records),
+            total_cached_tokens=sum(r.cached_tokens for r in records),
             call_count=len(records),
         )
         
@@ -354,6 +355,7 @@ class CostTracker:
             "cost": sum(r.cost_usd for r in records),
             "input_tokens": float(sum(r.input_tokens for r in llm_records)),
             "output_tokens": float(sum(r.output_tokens for r in llm_records)),
+            "cached_tokens": float(sum(r.cached_tokens for r in llm_records)),
             "llm_calls": float(len(llm_records)),
             "tool_calls": float(len(tool_records)),
         }

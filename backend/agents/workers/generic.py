@@ -317,8 +317,20 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
             raise e
             
         execution_time = time.time() - start_time if 'start_time' in locals() else 0
+        
+        # Recover partial usage stats even on failure
+        final_usage = usage_stats_update if 'usage_stats_update' in locals() else {}
+        if 'cost_callback' in locals():
+            try:
+                cb_usage = cost_callback.to_usage_stats()
+                for k, v in cb_usage.items():
+                    final_usage[k] = final_usage.get(k, 0) + v
+            except:
+                pass
+
         return {
             "output": f"Error: {str(e)}",
+            "usage_stats": final_usage,
             "metadata": {
                 "system_prompt": sys_prompt if 'sys_prompt' in locals() else "Error generating prompt",
                 "agent_role": agent_type,

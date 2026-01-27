@@ -112,11 +112,12 @@ Output a JSON object with "tasks" array and "reasoning" string."""
         
     except Exception as e:
         print(f"⚠️ [MiniPlanner] Failed to create plan: {e}")
+        usage = cost_callback.to_usage_stats() if 'cost_callback' in locals() else {}
         # Fallback: single research task
         return MiniPlan(
             tasks=[MiniTask(id="fallback_research", agent_type="Researcher", instruction=task)],
             reasoning=f"Fallback due to planning error: {e}"
-        ), {}
+        ), usage
 
 
 async def execute_mini_plan(
@@ -142,7 +143,9 @@ async def execute_mini_plan(
     subject = state.get("subject", "")
     budget_config = state.get("budget_config") or {}
     usage_stats = state.get("usage_stats") or {}
-    root_task_id = state.get("root_task_id", "")
+    # Attribution
+    root_task_id = state.get("root_task_id") or (config.get("configurable", {}).get("thread_id") if config else "unknown")
+    state["root_task_id"] = root_task_id # Ensure it's in state for children
     node_usage = initial_usage or {}
     
     print(f"🔀 [MiniOrchestrator] Executing {len(plan.tasks)} parallel tasks at depth {current_depth}...")
@@ -602,6 +605,7 @@ async def execute_node(state: WorkerState, config: RunnableConfig = None) -> Dic
             print(f"❌ [WorkerSubgraph] Execution error: {e}")
             return {
                 "results": {parent_id: f"[Error: {str(e)}]"},
+                "usage_stats": node_usage if 'node_usage' in locals() else {},
                 "all_agents": [{
                     "id": parent_id,
                     "role": "SubWorker",

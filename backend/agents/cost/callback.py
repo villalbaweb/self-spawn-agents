@@ -229,6 +229,7 @@ class CostTrackingCallback(BaseCallbackHandler):
             "cost": self.get_total_cost(),
             "input_tokens": float(tokens["input"]),
             "output_tokens": float(tokens["output"]),
+            "cached_tokens": float(tokens["cached"]),
             "llm_calls": float(len(self._records)),
         }
     

@@ -110,6 +110,7 @@ class CostSummary(BaseModel):
     total_cost_usd: float = 0.0
     total_input_tokens: int = 0
     total_output_tokens: int = 0
+    total_cached_tokens: int = 0
     call_count: int = 0
     
     by_type: Dict[str, float] = Field(default_factory=dict)
@@ -126,6 +127,7 @@ class UsageStatsUpdate(BaseModel):
     cost: float = 0.0
     input_tokens: int = 0
     output_tokens: int = 0
+    cached_tokens: int = 0
     llm_calls: int = 0
     tool_calls: int = 0
     
@@ -135,6 +137,7 @@ class UsageStatsUpdate(BaseModel):
             "cost": self.cost,
             "input_tokens": float(self.input_tokens),
             "output_tokens": float(self.output_tokens),
+            "cached_tokens": float(self.cached_tokens),
             "llm_calls": float(self.llm_calls),
             "tool_calls": float(self.tool_calls),
         }
