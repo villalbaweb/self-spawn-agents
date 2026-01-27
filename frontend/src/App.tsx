@@ -28,6 +28,7 @@ interface AgentInfo {
   // Tier 2 Warnings
   warning?: string;
   low_confidence_flag?: boolean;
+  parent?: string; // For compound node rendering
 }
 
 interface EdgeInfo {
@@ -320,15 +321,29 @@ function App() {
   // Helper placeholder - in reality we keep the old /fork for rewinds for now
   // and use /hydrate for the "Fork Button".
   const renderUnifiedGraph = (agents: AgentInfo[], edges: EdgeInfo[]) => {
-    setAllAgents(agents);
+    // Deduplicate agents by ID (subgraphs might return duplicate orchestrator records)
+    const uniqueAgentsMap = new Map<string, AgentInfo>();
+    agents.forEach(agent => {
+      // If we already have this agent, merge the data (prefer completion status/output)
+      if (uniqueAgentsMap.has(agent.id)) {
+        const existing = uniqueAgentsMap.get(agent.id)!;
+        uniqueAgentsMap.set(agent.id, { ...existing, ...agent });
+      } else {
+        uniqueAgentsMap.set(agent.id, agent);
+      }
+    });
+    const uniqueAgents = Array.from(uniqueAgentsMap.values());
+
+    setAllAgents(uniqueAgents);
 
     // Create a set of valid node IDs for fast lookup
-    const validNodeIds = new Set(agents.map((agent) => agent.id));
+    const validNodeIds = new Set(uniqueAgents.map((agent) => agent.id));
 
     const nodes = agents.map((agent) => ({
       data: {
         ...agent, // Spread ALL agent data (metadata, etc.)
-        label: `${agent.warning ? '⚠️ ' : ''}${agent.role}\n${agent.id.substring(0, 12)}`,
+        label: `${agent.warning ? '⚠️ ' : ''}${agent.role}\n${agent.id.split('_').pop()?.substring(0, 15)}`,
+        parent: undefined, // Explicitly disable compound node rendering by overriding spread
       },
       style: {
         'background-color': getColorByRole(agent.role),
@@ -392,24 +407,24 @@ function App() {
   const layout = {
     name: 'fcose',
     quality: "default",
-    randomize: true,
+    randomize: false, // Keep false to avoid jumping if not needed, but true usually helps initial
     animate: true,
     animationDuration: 1000,
     fit: true,
     padding: 30,
     nodeDimensionsIncludeLabels: true,
     uniformNodeDimensions: false,
-    packComponents: true,
+    packComponents: true, // Helps with disconnected parts
     step: "all",
-    nodeRepulsion: (_node: any) => 4500,
-    idealEdgeLength: (_edge: any) => 100,
+    nodeRepulsion: (_node: any) => 6500, // Increased to spread out nodes
+    idealEdgeLength: (_edge: any) => 120, // Increased for better breathing room
     edgeElasticity: (_edge: any) => 0.45,
     nestingFactor: 0.1,
-    gravity: 0.25,
+    gravity: 0.1, // Reduced gravity to let it expand
     numIter: 2500,
     tile: true,
-    tilingPaddingVertical: 10,
-    tilingPaddingHorizontal: 10
+    tilingPaddingVertical: 20,
+    tilingPaddingHorizontal: 20
   };
 
   const style = [
@@ -432,6 +447,7 @@ function App() {
       }
     },
     {
+      // Removed :parent selector style
       selector: 'node[warning]',
       style: {
         'border-width': 4,

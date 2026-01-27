@@ -151,14 +151,29 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 result_output = sub_results.get(_id, str(sub_results))
                 
                 # Build hierarchy edges connecting parent to child agents
+                # Build hierarchy edges connecting parent to DIRECT child agents only
                 hierarchy_edges = []
+                # sub_agents contains ALL descendants (flattened). 
+                # We only want to draw edges to immediate children (depth + 1) to form a tree.
+                # Grandchildren will have edges from their respective parents in sub_edges.
+                
                 for sub_agent in sub_agents:
-                    hierarchy_edges.append({
-                        "source": _id, 
-                        "target": sub_agent["id"],
-                        "depth": current_depth, 
-                        "type": "hierarchy"
-                    })
+                    # Set parent node for compound node rendering (avoid self-parenting)
+                    if sub_agent["id"] != _id:
+                         # Backend logic: Propagate parent ID to all descendants for compound node grouping if needed
+                         if "parent" not in sub_agent or not sub_agent["parent"]:
+                            sub_agent["parent"] = _id
+
+                         # Visualization logic: Only draw EDGE to direct children
+                         # (Check depth to avoid connecting to grandchildren)
+                         if sub_agent.get("depth") == current_depth + 1:
+                            hierarchy_edges.append({
+                                "source": _id, 
+                                "target": sub_agent["id"],
+                                "depth": current_depth, 
+                                "type": "hierarchy"
+                            })
+
 
                 # Create parent orchestrator agent record
                 parent_agent = {
@@ -186,7 +201,7 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 return_data = {
                     "results": {_id: result_output},
                     "metadata": {_id: {"agent_role": "SubOrchestrator", "confidence_score": confidence, "cost_usd": sub_usage.get("cost", 0.0)}},
-                    "all_agents": [parent_agent] + sub_agents,
+                    "all_agents": sub_agents + [parent_agent],
                     "all_edges": hierarchy_edges + sub_edges,
                     "usage_stats": usage_update
                 }
@@ -336,6 +351,37 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
     for node in nodes:
         if node["id"] not in parent_ids:
             workflow.add_edge(node["id"], END)
+            
+    # --- SAVE BLUEPRINT SNAPSHOT ---
+    try:
+        run_id = config.get("configurable", {}).get("thread_id", str(uuid.uuid4()))
+        blueprint_agents = []
+        for node in nodes:
+            blueprint_agents.append(AgentInfo(
+                id=node["id"],
+                role=node["agent_type"],
+                system_prompt="[Pending Execution]",
+                instruction=node["instruction"],
+                tools=[],
+                parent=None
+            ))
+        
+        blueprint = AppBlueprint(
+            run_id=run_id,
+            task=task,
+            agents=blueprint_agents,
+            edges=blueprint_edges,
+            execution_flow=[n["id"] for n in nodes],
+            timestamp=datetime.now().isoformat(),
+            depth=state.get("depth", 0)
+        )
+        
+        os.makedirs("blueprints", exist_ok=True)
+        with open(f"blueprints/{run_id}.json", "w") as f:
+            f.write(blueprint.model_dump_json())
+        print(f"📄 Blueprint saved to blueprints/{run_id}.json")
+    except Exception as e:
+        print(f"⚠️ Failed to save blueprint: {e}")
             
     # Compile with SHARED memory (accessed at runtime after initialization)
     app = workflow.compile(checkpointer=shared_memory.memory)
