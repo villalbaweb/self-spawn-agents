@@ -499,7 +499,15 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 "metadata": {},
                 # Add horizontal edges to the initial state
                 "all_agents": [],
-                "all_edges": [{"source": e.source, "target": e.target, "depth": state.get("depth", 0)} for e in blueprint_edges],
+                # "all_edges": [{"source": e.source, "target": e.target, "depth": state.get("depth", 0)} for e in blueprint_edges],
+                "all_edges": [
+                    # Dynamic edges
+                    {"source": e.source, "target": e.target, "depth": state.get("depth", 0)} for e in blueprint_edges
+                ] + [
+                    # Connect Supervisor to Roots (Nodes with no dependencies in the plan)
+                    {"source": "supervisor", "target": node["id"], "depth": state.get("depth", 0)}
+                     for node in nodes if not node.get("dependencies")
+                ],
                 # Pass budget config and usage stats for enforcement
                 "usage_stats": {}, # Start empty to return only the delta
                 "budget_config": {

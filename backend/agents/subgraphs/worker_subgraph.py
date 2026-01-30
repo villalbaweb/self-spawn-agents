@@ -323,6 +323,15 @@ async def execute_mini_plan(
             "depth": current_depth,
             "type": "hierarchy"
         })
+        
+        # --- RETURN EDGE (Child -> Parent) ---
+        # Visually close the loop for this mini-task
+        all_edges.append({
+            "source": r["agent_data"]["id"],
+            "target": parent_id,
+            "depth": current_depth,
+            "type": "return"
+        })
     
     # Combine outputs into summary
     combined_output = "\n\n---\n\n".join([

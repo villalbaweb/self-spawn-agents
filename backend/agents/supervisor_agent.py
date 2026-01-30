@@ -88,10 +88,23 @@ SAFEGUARDS:
             tracker._add_record(record)
         print(f"💰 [supervisor] Cost: ${cost_callback.get_total_cost():.6f}")
         
+        # Add Supervisor to visualization
+        supervisor_agent = {
+            "id": "supervisor",
+            "role": "Orchestrator",
+            "instruction": task,
+            "output": f"Planned {len(plan.nodes)} nodes: {', '.join(n.id for n in plan.nodes)}",
+            "tools": [],
+            "depth": state.get("depth", 0),
+            "status": "completed",
+            "execution_time_seconds": 0.0 # Placeholder
+        }
+        
         # Convert pydantic model to dict for state storage
         return {
             "graph_plan": plan.model_dump(),
-            "usage_stats": cost_callback.to_usage_stats()
+            "usage_stats": cost_callback.to_usage_stats(),
+            "all_agents": [supervisor_agent]
         }
         
     except Exception as e:
