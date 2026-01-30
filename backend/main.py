@@ -120,8 +120,11 @@ async def run_orchestrator(request: OrchestratorRequest):
                     output = event.get("data", {}).get("output")
                     if output and isinstance(output, dict):
                         latest_state.update(output)
-                        if "usage_stats" in latest_state:
-                            yield f"data: {json.dumps({'type': 'usage_stats', 'stats': latest_state['usage_stats']})}\n\n"
+                        # FIX: Source usage_stats from global CostTracker for Monotonic updates
+                        # (latest_state['usage_stats'] only contains the last node's delta)
+                        tracker = CostTracker.get_instance()
+                        real_stats = tracker.to_usage_stats(task_id=req_id)
+                        yield f"data: {json.dumps({'type': 'usage_stats', 'stats': real_stats})}\n\n"
 
                 # We care about when nodes start for progress logs
                 if kind == "on_chain_start" and name in ["semantic_splitter", "supervisor", "graph_compiler", "confidence_check", "synthesizer"]:

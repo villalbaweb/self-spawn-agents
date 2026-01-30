@@ -7,6 +7,8 @@ class AgentInfo(BaseModel):
     system_prompt: str = Field(..., description="The dynamic system prompt generated for this agent")
     tools: List[str] = Field(default_factory=list, description="List of tools available to this agent")
     instruction: str = Field(..., description="The specific instruction given to this agent")
+    parent: Optional[str] = Field(None, description="ID of the parent orchestator node")
+
 
 class EdgeInfo(BaseModel):
     source: str = Field(..., description="Source node ID")

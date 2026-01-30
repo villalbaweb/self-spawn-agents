@@ -205,6 +205,11 @@ async def execute_mini_plan(
                 child_agents = sub_result.get("all_agents", [])
                 child_edges = sub_result.get("all_edges", [])
                 
+                # Set parent for all child agents to enable compound node rendering
+                for ca in child_agents:
+                    if ca["id"] != task_id and ("parent" not in ca or not ca["parent"]):
+                        ca["parent"] = task_id
+                
                 return {
                     "task_id": mini_task.id,
                     "output": output,
@@ -218,7 +223,8 @@ async def execute_mini_plan(
                         "output": output[:500] if len(output) > 500 else output,
                         "execution_time_seconds": round(execution_time, 2),
                         "spawned_children": len(child_agents),
-                        "orchestration_mode": "recursive"
+                        "orchestration_mode": "recursive",
+                        "parent": parent_id
                     },
                     "child_agents": child_agents,
                     "child_edges": child_edges,
@@ -260,7 +266,8 @@ async def execute_mini_plan(
                         "execution_time_seconds": round(execution_time, 2),
                         "tool_used": meta.get("tool_used"),
                         "confidence_score": meta.get("confidence_score", 0.5),
-                        "orchestration_mode": "direct"
+                        "orchestration_mode": "direct",
+                        "parent": parent_id
                     },
                     "child_agents": [],
                     "child_edges": [],
@@ -295,7 +302,11 @@ async def execute_mini_plan(
     
     for r in results:
         all_outputs[r["task_id"]] = r["output"]
-        all_agents.append(r["agent_data"])
+        
+        # Include child agents/edges from recursive spawns first
+        all_agents.extend(r.get("child_agents", []))
+        all_agents.append(r["agent_data"]) # Representative last to win deduplication
+        all_edges.extend(r.get("child_edges", []))
         
         # Merge usage stats from this task
         task_usage = r.get("usage_stats", {})
@@ -305,16 +316,21 @@ async def execute_mini_plan(
             else:
                 usage_stats[key] = val
         
-        # Include child agents/edges from recursive spawns
-        all_agents.extend(r.get("child_agents", []))
-        all_edges.extend(r.get("child_edges", []))
-        
         # Create edge from parent to each child
         all_edges.append({
             "source": parent_id,
             "target": r["agent_data"]["id"],
             "depth": current_depth,
             "type": "hierarchy"
+        })
+        
+        # --- RETURN EDGE (Child -> Parent) ---
+        # Visually close the loop for this mini-task
+        all_edges.append({
+            "source": r["agent_data"]["id"],
+            "target": parent_id,
+            "depth": current_depth,
+            "type": "return"
         })
     
     # Combine outputs into summary

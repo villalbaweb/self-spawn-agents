@@ -1,12 +1,17 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import CytoscapeComponent from 'react-cytoscapejs';
 import cytoscape from 'cytoscape';
 import fcose from 'cytoscape-fcose';
+import dagre from 'cytoscape-dagre';
 import { HistorySidebar } from './HistorySidebar';
 import './App.css';
 
-// Register fcose layout
 cytoscape.use(fcose);
+cytoscape.use(dagre);
+
+// ... inside App component ...
+
+
 
 interface AgentInfo {
   id: string;
@@ -28,6 +33,7 @@ interface AgentInfo {
   // Tier 2 Warnings
   warning?: string;
   low_confidence_flag?: boolean;
+  parent?: string; // For compound node rendering
 }
 
 interface EdgeInfo {
@@ -74,6 +80,78 @@ function App() {
     tool_calls: 0,
     steps: 0
   });
+
+  const layout = useMemo(() => ({
+    name: 'dagre',
+    rankDir: 'TB', // Top-to-Bottom
+    padding: 30,
+    fit: true,
+    spacingFactor: 1.2,
+    nodeSep: 80,
+    rankSep: 120,
+    ranker: 'network-simplex',
+    animate: true,
+    animationDuration: 500,
+  }), []);
+
+  const style = useMemo(() => [
+    {
+      selector: 'node',
+      style: {
+        'label': 'data(label)',
+        'text-valign': 'center',
+        'text-halign': 'center',
+        'font-family': 'Inter, Roboto, sans-serif',
+        'font-size': '10px',
+        'font-weight': 500,
+        'color': '#fff',
+        'text-wrap': 'wrap',
+        'width': 80,
+        'height': 80,
+        'shape': 'ellipse',
+        'overlay-padding': '6px',
+        'z-index': 10
+      }
+    },
+    {
+      selector: 'node[warning]',
+      style: {
+        'border-width': 4,
+        'border-color': '#f1c40f',
+        'background-color': '#f1c40f',
+        'background-opacity': 0.2,
+        'text-outline-width': 2,
+        'text-outline-color': '#333',
+        'shadow-blur': 10,
+        'shadow-color': '#f1c40f',
+        'shadow-opacity': 0.5
+      }
+    },
+    {
+      selector: 'edge',
+      style: {
+        'width': 1.5,
+        'line-color': '#a4b0be',
+        'line-opacity': 0.6,
+        'target-arrow-color': '#a4b0be',
+        'target-arrow-shape': 'triangle',
+        'curve-style': 'bezier',
+        'arrow-scale': 0.8
+      }
+    },
+    {
+      selector: 'edge[type="hierarchy"]',
+      style: {
+        'line-style': 'solid',
+        'width': 2,
+        'line-color': '#2ed573',
+        'line-opacity': 0.8,
+        'target-arrow-color': '#2ed573',
+        'curve-style': 'bezier',
+        'arrow-scale': 1.0
+      }
+    }
+  ], []);
 
   // Specific Node Editing State
   const [isEditing, setIsEditing] = useState<boolean>(false);
@@ -320,15 +398,29 @@ function App() {
   // Helper placeholder - in reality we keep the old /fork for rewinds for now
   // and use /hydrate for the "Fork Button".
   const renderUnifiedGraph = (agents: AgentInfo[], edges: EdgeInfo[]) => {
-    setAllAgents(agents);
+    // Deduplicate agents by ID (subgraphs might return duplicate orchestrator records)
+    const uniqueAgentsMap = new Map<string, AgentInfo>();
+    agents.forEach(agent => {
+      // If we already have this agent, merge the data (prefer completion status/output)
+      if (uniqueAgentsMap.has(agent.id)) {
+        const existing = uniqueAgentsMap.get(agent.id)!;
+        uniqueAgentsMap.set(agent.id, { ...existing, ...agent });
+      } else {
+        uniqueAgentsMap.set(agent.id, agent);
+      }
+    });
+    const uniqueAgents = Array.from(uniqueAgentsMap.values());
+
+    setAllAgents(uniqueAgents);
 
     // Create a set of valid node IDs for fast lookup
-    const validNodeIds = new Set(agents.map((agent) => agent.id));
+    const validNodeIds = new Set(uniqueAgents.map((agent) => agent.id));
 
     const nodes = agents.map((agent) => ({
       data: {
         ...agent, // Spread ALL agent data (metadata, etc.)
-        label: `${agent.warning ? '⚠️ ' : ''}${agent.role}\n${agent.id.substring(0, 12)}`,
+        label: `${agent.warning ? '⚠️ ' : ''}${agent.role}\n${agent.id.split('_').pop()?.substring(0, 15)}`,
+        parent: undefined, // Explicitly disable compound node rendering by overriding spread
       },
       style: {
         'background-color': getColorByRole(agent.role),
@@ -344,13 +436,22 @@ function App() {
     }));
 
     // Filter out edges that reference non-existent nodes to prevent Cytoscape crash
+    // AND Deduplicate edges (prevent multiple arrows between same agents)
+    const seenEdges = new Set<string>();
     const validEdges = edges.filter((edge) => {
+      const uniqueKey = `${edge.source}|${edge.target}`;
+      if (seenEdges.has(uniqueKey)) {
+        return false;
+      }
+
       const sourceExists = validNodeIds.has(edge.source);
       const targetExists = validNodeIds.has(edge.target);
       if (!sourceExists || !targetExists) {
-        console.warn(`Skipping edge: source=${edge.source} (${sourceExists ? 'exists' : 'missing'}), target=${edge.target} (${targetExists ? 'exists' : 'missing'})`);
+        // console.warn(`Skipping edge: source=${edge.source} (${sourceExists ? 'exists' : 'missing'}), target=${edge.target} (${targetExists ? 'exists' : 'missing'})`);
         return false;
       }
+
+      seenEdges.add(uniqueKey);
       return true;
     });
 
@@ -389,88 +490,7 @@ function App() {
     }
   };
 
-  const layout = {
-    name: 'fcose',
-    quality: "default",
-    randomize: true,
-    animate: true,
-    animationDuration: 1000,
-    fit: true,
-    padding: 30,
-    nodeDimensionsIncludeLabels: true,
-    uniformNodeDimensions: false,
-    packComponents: true,
-    step: "all",
-    nodeRepulsion: (_node: any) => 4500,
-    idealEdgeLength: (_edge: any) => 100,
-    edgeElasticity: (_edge: any) => 0.45,
-    nestingFactor: 0.1,
-    gravity: 0.25,
-    numIter: 2500,
-    tile: true,
-    tilingPaddingVertical: 10,
-    tilingPaddingHorizontal: 10
-  };
 
-  const style = [
-    {
-      selector: 'node',
-      style: {
-        'label': 'data(label)',
-        'text-valign': 'center',
-        'text-halign': 'center',
-        'font-family': 'Inter, Roboto, sans-serif',
-        'font-size': '10px',
-        'font-weight': 500,
-        'color': '#fff',
-        'text-wrap': 'wrap',
-        'width': 80,
-        'height': 80,
-        'shape': 'ellipse',
-        'overlay-padding': '6px',
-        'z-index': 10
-      }
-    },
-    {
-      selector: 'node[warning]',
-      style: {
-        'border-width': 4,
-        'border-color': '#f1c40f',
-        'background-color': '#f1c40f',
-        'background-opacity': 0.2,
-        'text-outline-width': 2,
-        'text-outline-color': '#333',
-        'shadow-blur': 10,
-        'shadow-color': '#f1c40f',
-        'shadow-opacity': 0.5
-      }
-    },
-    {
-      selector: 'edge',
-      style: {
-        'width': 1.5,
-        'line-color': '#a4b0be',
-        'line-opacity': 0.6,
-        'target-arrow-color': '#a4b0be',
-        'target-arrow-shape': 'triangle',
-        'curve-style': 'bezier',
-        'arrow-scale': 0.8
-      }
-    },
-    {
-      selector: 'edge[type="hierarchy"]',
-      style: {
-        'line-style': 'solid', // solid but thinner/lighter looks better in modern UI than dashed sometimes, but let's keep it distinct
-        'width': 2,
-        'line-color': '#2ed573',
-        'line-opacity': 0.8,
-        'target-arrow-color': '#2ed573',
-        'curve-style': 'unbundled-bezier',
-        'control-point-distances': [20, -20], // subtle wave
-        'control-point-weights': [0.25, 0.75]
-      }
-    }
-  ];
 
   return (
     <div className="app-container">

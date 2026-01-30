@@ -90,7 +90,31 @@ Research Results:
         print(f"💰 [synthesizer] Cost: ${cost_callback.get_total_cost():.6f}")
         
         print("✅ Synthesis complete.")
-        return {"synthesis": output, "usage_stats": cost_callback.to_usage_stats()}
+        
+        # Add Synthesizer to visualization
+        synthesizer_agent = {
+            "id": "synthesizer",
+            "role": "Orchestrator", # Or Writer/System
+            "instruction": "Synthesize final report from results",
+            "output": output[:200] + "...", # Truncate for graph view
+            "tools": [],
+            "depth": state.get("depth", 0),
+            "status": "completed",
+            "execution_time_seconds": 0.0
+        }
+        
+        # Connect all result producers to synthesizer
+        synthesizer_edges = [
+            {"source": node_id, "target": "synthesizer", "depth": state.get("depth", 0)}
+            for node_id in results.keys()
+        ]
+        
+        return {
+            "synthesis": output, 
+            "usage_stats": cost_callback.to_usage_stats(),
+            "all_agents": [synthesizer_agent],
+            "all_edges": synthesizer_edges
+        }
     except Exception as e:
         print(f"❌ Error in synthesizer_node: {e}")
         return {"synthesis": f"Error generating synthesis: {str(e)}", "usage_stats": {}}
