@@ -55,13 +55,11 @@ Analyze the <candidate_output> against the <user_instruction> and produce the JS
 }}
 </task>"""
 
+    messages = [
+        SystemMessage(content=evaluation_prompt),
+        HumanMessage(content="Evaluate the candidate output against the user instruction and providing the required JSON response.")
+    ]
     try:
-        messages = [
-            SystemMessage(content="You are a quality evaluator. Output ONLY valid JSON."),
-            HumanMessage(content=evaluation_prompt)
-        ]
-        
-        # Cost tracking setup - prefer root_task_id for consistent attribution
         task_id = root_task_id or (config.get("configurable", {}).get("thread_id") if config else None)
         cost_callback = CostTrackingCallback(task_id=task_id, node_name="evaluate_confidence")
         llm_config: RunnableConfig = {"callbacks": [cost_callback]}

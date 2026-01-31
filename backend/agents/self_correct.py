@@ -44,12 +44,11 @@ async def simple_self_correct(instruction: str, output: str, previous_reasoning:
 
 <task>Generate the improved response based on the diagnosis.</task>"""
 
+    messages = [
+        SystemMessage(content=correction_prompt),
+        HumanMessage(content="Analyze the failed attempt and generate the improved response as instructed.")
+    ]
     try:
-        messages = [
-            SystemMessage(content=f"You are an expert {agent_type} refining your previous work."),
-            HumanMessage(content=correction_prompt)
-        ]
-        
         # Cost tracking setup - prefer root_task_id for consistent attribution
         task_id = root_task_id or (config.get("configurable", {}).get("thread_id") if config else None)
         cost_callback = CostTrackingCallback(task_id=task_id, node_name="self_correct")

@@ -98,9 +98,10 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                             truncated = dep_output[:2000] + "..." if len(dep_output) > 2000 else dep_output
                             context_parts.append(f"<input_data source=\"{dep_id}\">\n{truncated}\n</input_data>")
                 
-                enriched_task = _instr
                 if context_parts:
-                    enriched_task = _instr + "\n\nContext:\n" + "\n".join(context_parts)
+                    enriched_task = "\n".join(context_parts) + f"\n\n<task>{_instr}</task>"
+                else:
+                    enriched_task = f"<task>{_instr}</task>"
                 
                 # Extract root_task_id for cost attribution
                 # Prefer root_task_id from state (passed down from parent), fall back to config
@@ -270,8 +271,8 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                             context_parts.append(f"<input_data source=\"{dep_id}\">\n{truncated}\n</input_data>")
                             
                 subject = s.get("subject", "")
-                subject_block = f"<subject>{subject}</subject>\n" if subject else ""
-                enriched_instruction = f"{subject_block}" + "\n".join(context_parts) + f"\n\n<task>\n{_instr}\n</task>"
+                subject_block = f"<input_data type=\"subject\">{subject}</input_data>\n" if subject else ""
+                enriched_instruction = f"{subject_block}" + "\n".join(context_parts) + f"\n\n<task>{_instr}</task>"
                 
                 result = await generic_worker_node(s, enriched_instruction, _type, config)
                 

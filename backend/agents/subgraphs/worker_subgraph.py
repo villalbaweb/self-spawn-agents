@@ -100,8 +100,8 @@ async def create_mini_plan(task: str, subject: str, root_task_id: str = None, co
 
     try:
         messages = [
-            SystemMessage(content="You are a lightweight task planner. Output valid JSON only."),
-            HumanMessage(content=plan_prompt)
+            SystemMessage(content=plan_prompt),
+            HumanMessage(content="Decompose the grand task into the requested parallel sub-tasks based on the core subject.")
         ]
         
         # Cost tracking - use root_task_id for consistent attribution
@@ -434,8 +434,8 @@ async def should_decompose(task: str, config: RunnableConfig = None, root_task_i
 <task>Classify the task complexity.</task>"""
         
         messages = [
-            SystemMessage(content="You classify task complexity. One word answer only."),
-            HumanMessage(content=check_prompt)
+            SystemMessage(content=check_prompt),
+            HumanMessage(content="Respond with EXACTLY 'DECOMPOSE' or 'SINGLE' based on the task description.")
         ]
         
         # Cost tracking - use root_task_id for consistent attribution

@@ -70,9 +70,9 @@ Available Agent Types:
 
     messages = [
         SystemMessage(content=sys_prompt),
-        HumanMessage(content=user_content)
+        HumanMessage(content=f"<input_data>{user_content}</input_data>")
     ]
-
+    
     try:
         structured_llm = llm.with_structured_output(GraphPlan)
         plan: GraphPlan = await structured_llm.ainvoke(messages, config=llm_config)

@@ -37,21 +37,6 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig = None) -> 
     synthesis_prompt = f"""<role>Professional Executive Report Writer</role>
 <objective>Synthesize all research and execution results into a high-fidelity, professional Markdown document.</objective>
 
-<input_data>
-    <report_subject>
-    {subject}
-    </report_subject>
-    <required_deliverables>
-    {deliverables_text}
-    </required_deliverables>
-    <original_task>
-    {task}
-    </original_task>
-    <execution_results>
-    {results_text}
-    </execution_results>
-</input_data>
-
 <constraints>
 - Output a well-structured, professional Markdown document.
 - **Deliverable Check**: Ensure EVERY item in <required_deliverables> is addressed in its own section.
@@ -59,14 +44,22 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig = None) -> 
 - **Structure**: Include a concise Executive Summary at the top.
 - **Gaps**: If a deliverable is missing in <execution_results>, create a placeholder section explaining the limitation.
 - **Tone**: Professional, objective, and technical.
-</constraints>
+</constraints>"""
+
+    user_input = f"""<input_data>
+    <report_subject>{subject}</report_subject>
+    <required_deliverables>{deliverables_text}</required_deliverables>
+    <original_task>{task}</original_task>
+    <execution_results>
+    {results_text}
+    </execution_results>
+</input_data>
 
 <task>Create the final synthesis report based on the <execution_results>.</task>"""
 
-
     messages = [
-        SystemMessage(content="You are a professional technical writer specialized in executive reports. Your goal is to provide clear, actionable, and well-structured documentation."),
-        HumanMessage(content=synthesis_prompt)
+        SystemMessage(content=synthesis_prompt),
+        HumanMessage(content=user_input)
     ]
     
     try:
