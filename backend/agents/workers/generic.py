@@ -1,5 +1,5 @@
 from langchain_core.messages import SystemMessage, HumanMessage
-from agents.dependencies import llm, llm_mini, TIER1_THRESHOLD, TIER2_THRESHOLD, TIER3_THRESHOLD
+from agents.dependencies import llm, llm_mini, TIER1_THRESHOLD, TIER2_THRESHOLD, TIER3_THRESHOLD, safe_ainvoke
 from agents.evaluate_confidence import evaluate_confidence
 from langchain_core.runnables import RunnableConfig
 from agents.cost import CostTrackingCallback, CostTracker
@@ -76,7 +76,7 @@ async def generate_dynamic_system_prompt(instruction: str, agent_type: str, conf
     cost_callback = CostTrackingCallback(task_id=task_id, node_name="prompt_generation")
     llm_config: RunnableConfig = {"callbacks": [cost_callback]}
     
-    response = await llm_mini.ainvoke(messages, config=llm_config)
+    response = await safe_ainvoke(llm_mini, messages, config=llm_config)
     
     # Record to global tracker
     tracker = CostTracker.get_instance()
@@ -158,7 +158,7 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
         llm_with_tools = llm.bind_tools(tools) if tools else llm
         
         # Pass cost tracking config to LLM
-        response = await llm_with_tools.ainvoke(messages, config=llm_config)
+        response = await safe_ainvoke(llm_with_tools, messages, config=llm_config)
         
         final_output = ""
         tools_available = []

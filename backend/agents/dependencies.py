@@ -42,3 +42,38 @@ MAX_RECURSION_DEPTH = int(os.getenv("MAX_RECURSION_DEPTH", "3"))
 TIER1_THRESHOLD = float(os.getenv("HITL_TIER1_THRESHOLD", "0.85")) # Below this triggers self-correction
 TIER2_THRESHOLD = float(os.getenv("HITL_TIER2_THRESHOLD", "0.60")) # Below this sets low_confidence_flag
 TIER3_THRESHOLD = float(os.getenv("HITL_TIER3_THRESHOLD", "0.35")) # Below this triggers Hard Stop interrupt
+
+# --- RATE LIMIT PROTECTION ---
+import asyncio
+import openai
+from tenacity import retry, wait_random_exponential, stop_after_attempt, retry_if_exception_type
+
+# Global semaphore to limit concurrent LLM calls system-wide
+# Default to 10 concurrent calls if not specified in env
+MAX_CONCURRENCY = int(os.getenv("LLM_MAX_CONCURRENCY", "10"))
+GLOBAL_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENCY)
+
+async def safe_ainvoke(runnable, input_data, config=None):
+    """
+    Executes a runnable.ainvoke with system-wide concurrency limits and 
+    rate-limit retries.
+    """
+    # 1. Determine which semaphore to use (config override or global)
+    # This allows specific graphs to potentially have stricter limits
+    sem = GLOBAL_SEMAPHORE
+    if config and "configurable" in config and "semaphore" in config["configurable"]:
+        sem = config["configurable"]["semaphore"]
+        
+    # 2. Define the retry-wrapped execution function
+    @retry(
+        retry=retry_if_exception_type(openai.RateLimitError),
+        wait=wait_random_exponential(multiplier=1, max=60),
+        stop=stop_after_attempt(6),
+        reraise=True
+    )
+    async def _invoke_with_retry():
+        async with sem:
+            return await runnable.ainvoke(input_data, config=config)
+            
+    # 3. Execute
+    return await _invoke_with_retry()

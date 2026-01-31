@@ -31,7 +31,7 @@ from pydantic import BaseModel, Field
 from agents.subgraphs.state import WorkerState
 from agents.workers.generic import generic_worker_node
 from agents.evaluate_confidence import evaluate_confidence
-from agents.dependencies import MAX_RECURSION_DEPTH, llm_mini
+from agents.dependencies import MAX_RECURSION_DEPTH, llm_mini, safe_ainvoke
 from agents.cost import CostTrackingCallback, CostTracker
 import asyncio
 import time
@@ -68,6 +68,12 @@ class MiniPlan(BaseModel):
     """Lightweight execution plan - no dependencies, all parallel."""
     tasks: List[MiniTask] = Field(..., description="List of 2-4 parallel tasks")
     reasoning: str = Field(..., description="Brief explanation of the plan")
+
+
+class ComplexityClassification(BaseModel):
+    """Result of task complexity analysis."""
+    needs_decomposition: bool = Field(..., description="True if the task should be split into parallel sub-tasks")
+    reasoning: str = Field(..., description="Brief explanation of why decomposition is or isn't needed")
 
 
 async def create_mini_plan(task: str, subject: str, root_task_id: str = None, config: RunnableConfig = None) -> MiniPlan:
@@ -109,7 +115,7 @@ async def create_mini_plan(task: str, subject: str, root_task_id: str = None, co
         llm_config: RunnableConfig = {"callbacks": [cost_callback]}
         
         structured_llm = llm_mini.with_structured_output(MiniPlan)
-        plan = await structured_llm.ainvoke(messages, config=llm_config)
+        plan = await safe_ainvoke(structured_llm, messages, config=llm_config)
         
         # Record to global tracker
         tracker = CostTracker.get_instance()
@@ -360,102 +366,61 @@ async def execute_mini_plan(
 
 async def should_decompose(task: str, config: RunnableConfig = None, root_task_id: str = None) -> bool:
     """
-    Quick check if task needs decomposition into sub-tasks.
-    Uses heuristics first, then LLM if uncertain.
-    
-    IMPORTANT: Tasks marked recursive:true by supervisor should ALWAYS
-    pass through here and be decomposed. The supervisor already did
-    high-level analysis - trust its judgment.
+    Determine if a task needs decomposition into parallel sub-tasks.
+    Replaced brittle regex/keyword logic with semantic classification.
     
     Args:
         task: The task to analyze
         config: RunnableConfig for LLM calls
         root_task_id: Task ID for cost attribution
     """
-    task_lower = task.lower()
-    
-    # Heuristic 1: Check for explicit multi-part indicators FIRST
-    # These trump the length check
-    strong_indicators = [
-        "oauth", "jwt", "rbac", "authentication", "authorization",
-        "multiple", "several", "components", "modules", "layers",
-        "step 1", "step 2", "first,", "then,", "finally,",
-        "1.", "2.", "3.",  # Numbered lists
-    ]
-    strong_matches = sum(1 for ind in strong_indicators if ind in task_lower)
-    
-    # If we have 2+ strong indicators, decompose regardless of length
-    if strong_matches >= 2:
-        print(f"   [should_decompose] TRUE - {strong_matches} strong indicators found")
-        return True, {}
-    
-    # Heuristic 2: Conjunction complexity (multiple things joined by 'and')
-    and_count = task_lower.count(" and ")
-    if and_count >= 2:
-        print(f"   [should_decompose] TRUE - {and_count} 'and' conjunctions (multi-part task)")
-        return True, {}
-    
-    # Heuristic 3: Short tasks without indicators are simple
-    if len(task) < 100 and strong_matches == 0:
-        print(f"   [should_decompose] FALSE - short task ({len(task)} chars), no indicators")
+    # 1. Basic Safety Rails (Extremely simple/short tasks)
+    if len(task.strip()) < 15:
+        print(f"   [should_decompose] FALSE - extremely short task ({len(task)} chars)")
         return False, {}
-    
-    # Heuristic 4: Additional weak indicators
-    weak_indicators = [
-        " with ", "frontend", "backend", "database", "api",
-        "integration", "service", "system", "implement"
-    ]
-    weak_matches = sum(1 for ind in weak_indicators if ind in task_lower)
-    
-    total_matches = strong_matches + weak_matches
-    if total_matches >= 3:
-        print(f"   [should_decompose] TRUE - {total_matches} total indicators")
-        return True, {}
-    if total_matches == 0:
-        print(f"   [should_decompose] FALSE - no complexity indicators")
-        return False, {}
-    
-    # Uncertain (1-2 indicators) - use quick LLM check
+
+    # 2. Semantic Classification using llm_mini
     try:
-        print(f"   [should_decompose] Uncertain ({total_matches} indicators), asking LLM...")
-        check_prompt = f"""<role>Task Complexity Classifier</role>
-<objective>Determine if the following task requires decomposition into multiple parallel steps or if it can be handled by a single specialist agent.</objective>
+        print(f"   [should_decompose] Classifying semantic intent...")
+        
+        classify_prompt = f"""<role>Task Complexity Classifier</role>
+<objective>Analyze the semantic intent of the task to determine if it requires decomposition into 2-4 parallel sub-tasks.</objective>
 
 <input_data>
-{task[:500]}
+{task}
 </input_data>
 
-<constraints>
-- Reply with EXACTLY one of: "DECOMPOSE" or "SINGLE".
-- Use "DECOMPOSE" if the task mentions multiple distinct components, layers (e.g., frontend AND backend), or requires disparate search paths.
-- Use "SINGLE" for atomic operations or simple data retrieval.
-</constraints>
+<guidelines>
+- **DECOMPOSE (True)**: If the task involves multiple distinct components (e.g., frontend AND backend), requires disparate types of research/action, or covers several independent modules.
+- **SINGLE (False)**: If the task is a single atomic operation, a focused research query, or a simple debugging/coding task that doesn't benefit from parallelization.
+- **Ambiguity**: If the task is phrased simply but implies complex infrastructure (e.g., 'Set up auth'), err on the side of DECOMPOSE.
+</guidelines>
 
-<task>Classify the task complexity.</task>"""
+<task>Return a JSON object with `needs_decomposition` (bool) and `reasoning` (string).</task>"""
         
         messages = [
-            SystemMessage(content=check_prompt),
-            HumanMessage(content="Respond with EXACTLY 'DECOMPOSE' or 'SINGLE' based on the task description.")
+            SystemMessage(content=classify_prompt),
+            HumanMessage(content="Analyze the task complexity and return the structured classification.")
         ]
         
-        # Cost tracking - use root_task_id for consistent attribution
-        cost_callback = CostTrackingCallback(task_id=root_task_id, node_name="complexity_check")
+        # Cost tracking
+        cost_callback = CostTrackingCallback(task_id=root_task_id, node_name="complexity_classifier")
         llm_config: RunnableConfig = {"callbacks": [cost_callback]}
         
-        response = await llm_mini.ainvoke(messages, config=llm_config)
+        structured_llm = llm_mini.with_structured_output(ComplexityClassification)
+        classification = await safe_ainvoke(structured_llm, messages, config=llm_config)
         
-        # Record to global tracker
+        # Record costs
         tracker = CostTracker.get_instance()
         for record in cost_callback.records:
             tracker._add_record(record)
-        
-        result = "DECOMPOSE" in response.content.upper()
-        print(f"   [should_decompose] LLM says: {'DECOMPOSE' if result else 'SINGLE'}")
-        return result, cost_callback.to_usage_stats()
+            
+        print(f"   [should_decompose] Result: {classification.needs_decomposition} ({classification.reasoning[:60]}...)")
+        return classification.needs_decomposition, cost_callback.to_usage_stats()
         
     except Exception as e:
-        print(f"   [should_decompose] LLM check failed: {e}, defaulting to FALSE")
-        return False, {} # Default to simple on error
+        print(f"   [should_decompose] Classifier failed: {e}, falling back to SINGLE")
+        return False, {}
 
 
 # --- MAIN EXECUTION NODE ---

@@ -11,13 +11,14 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 from agents.subgraphs import worker_subgraph, build_worker_subgraph, WorkerState
 from agents.subgraphs.worker_subgraph import (
-    execute_node, 
-    validate_node, 
+    execute_node,
+    validate_node,
     should_decompose,
     create_mini_plan,
     execute_mini_plan,
     MiniTask,
-    MiniPlan
+    MiniPlan,
+    ComplexityClassification
 )
 
 
@@ -63,44 +64,54 @@ class TestShouldDecompose:
     """Tests for the should_decompose complexity detection."""
     
     @pytest.mark.asyncio
-    async def test_short_simple_task_returns_false(self):
-        """Short tasks without indicators should return False."""
-        result = await should_decompose("Find the current price of Bitcoin")
+    async def test_extremely_short_task_returns_false(self):
+        """Tasks under 40 chars should be marked simple via safety rail."""
+        result, _ = await should_decompose("Short task")
         assert result is False
     
     @pytest.mark.asyncio
-    async def test_strong_indicators_return_true(self):
-        """Tasks with 2+ strong indicators should return True."""
-        task = "Implement authentication with OAuth2 and JWT tokens"
-        result = await should_decompose(task)
-        assert result is True
-    
-    @pytest.mark.asyncio
-    async def test_multiple_and_conjunctions_return_true(self):
-        """Tasks with 2+ 'and' conjunctions should return True."""
-        task = "Build a REST API and add database support and implement testing"
-        result = await should_decompose(task)
-        assert result is True
-    
-    @pytest.mark.asyncio
-    async def test_no_indicators_short_task_returns_false(self):
-        """Short tasks without complexity indicators should return False."""
-        result = await should_decompose("Write a hello world function")
-        assert result is False
-    
-    @pytest.mark.asyncio
-    async def test_llm_check_on_uncertain_task(self):
-        """Tasks with 1-2 indicators should trigger LLM check."""
-        task = "Create a user registration API with validation"  # Has "with" but short
-        
-        mock_response = MagicMock()
-        mock_response.content = "DECOMPOSE"
+    async def test_semantic_classification_true(self):
+        """Verify that the classifier can trigger decomposition."""
+        task = "Implement a dual-layer authentication system with OAuth and JWT"
+        mock_classification = ComplexityClassification(
+            needs_decomposition=True,
+            reasoning="Task involves multiple auth components."
+        )
         
         with patch("agents.subgraphs.worker_subgraph.llm_mini") as mock_llm:
-            mock_llm.ainvoke = AsyncMock(return_value=mock_response)
-            result = await should_decompose(task)
-            # Should have called LLM for uncertain case
-            # Result depends on mock
+            structured_mock = MagicMock()
+            structured_mock.ainvoke = AsyncMock(return_value=mock_classification)
+            mock_llm.with_structured_output.return_value = structured_mock
+            
+            result, stats = await should_decompose(task)
+            assert result is True
+            assert "usage_stats" not in stats or isinstance(stats, dict)
+    
+    @pytest.mark.asyncio
+    async def test_semantic_classification_false(self):
+        """Verify that the classifier can identify simple tasks."""
+        task = "Research the current weather in Tokyo"
+        mock_classification = ComplexityClassification(
+            needs_decomposition=False,
+            reasoning="Single research query."
+        )
+        
+        with patch("agents.subgraphs.worker_subgraph.llm_mini") as mock_llm:
+            structured_mock = MagicMock()
+            structured_mock.ainvoke = AsyncMock(return_value=mock_classification)
+            mock_llm.with_structured_output.return_value = structured_mock
+            
+            result, _ = await should_decompose(task)
+            assert result is False
+    
+    @pytest.mark.asyncio
+    async def test_fallback_on_llm_error(self):
+        """Should fall back to SINGLE (False) if the LLM fails."""
+        with patch("agents.subgraphs.worker_subgraph.llm_mini") as mock_llm:
+            mock_llm.with_structured_output.side_effect = Exception("LLM Error")
+            
+            result, _ = await should_decompose("Some long task that exceeds the length check limit")
+            assert result is False
 
 
 class TestMiniPlanner:

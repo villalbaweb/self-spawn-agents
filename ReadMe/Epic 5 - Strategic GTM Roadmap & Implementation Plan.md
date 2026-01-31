@@ -4,11 +4,10 @@ This plan addresses the critical deficiencies and pending items identified acros
 
 ## Pending Item List (Level 4 Implementation)
 
-- [ ] **1. Deterministic Heuristic Fragility (SPI Risk)**
-    *   **Goal:** Replace brittle Regex/Keyword logic with Semantic Classification.
-    *   **Risk:** Users phrasing complex tasks simply might fail to trigger decomposition.
-    *   **Action:** Deploy a distilled, ultra-fast classifier to classify task complexity based on semantic intent.
-    *   **Derived from:** [Critical Efficiency Feedback]
+- [x] **1. Deterministic Heuristic Fragility (SPI Risk) & Rate Limit Stability**
+    *   **Goal:** Replace brittle Regex/Keyword logic with Semantic Classification and fix 429 errors.
+    *   **Action:** Deployed `ComplexityClassification` model using `llm_mini`. Implemented Global Semaphore and Exponential Backoff (`safe_ainvoke`) to handle increased fan-out traffic.
+    *   **Derived from:** [Critical Efficiency Feedback] & [Rate Limit Analysis]
 
 - [ ] **2. Production Persistence (Infrastructure)**
     *   **Goal:** Eliminate database lock contentions in recursive parallel executions.

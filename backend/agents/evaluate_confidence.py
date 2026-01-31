@@ -8,7 +8,7 @@ to detect "null result" failures (the "Phantom Protocol" fix).
 
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
-from agents.dependencies import llm_mini
+from agents.dependencies import llm_mini, safe_ainvoke
 from agents.cost import CostTrackingCallback, CostTracker
 import re
 import json
@@ -64,7 +64,7 @@ Analyze the <candidate_output> against the <user_instruction> and produce the JS
         cost_callback = CostTrackingCallback(task_id=task_id, node_name="evaluate_confidence")
         llm_config: RunnableConfig = {"callbacks": [cost_callback]}
         
-        response = await llm_mini.ainvoke(messages, config=llm_config)
+        response = await safe_ainvoke(llm_mini, messages, config=llm_config)
         
         # Record costs to global tracker
         tracker = CostTracker.get_instance()
