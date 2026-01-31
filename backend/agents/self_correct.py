@@ -19,27 +19,31 @@ async def simple_self_correct(instruction: str, output: str, previous_reasoning:
     """
     print(f"🔄 [AITL] Tier 1 Self-Correction triggered for {agent_type}")
     
-    correction_prompt = f"""You previously attempted to answer the following instruction but evaluated your own confidence as LOW (< {TIER1_THRESHOLD}).
-    
-<instruction>
-{instruction}
-</instruction>
+    correction_prompt = f"""<role>Expert Self-Correction Agent</role>
+<objective>Critically refine your previous output to reach high confidence and mission success.</objective>
 
-<previous_output>
-{output}
-</previous_output>
+<input_data>
+    <original_instruction>
+    {instruction}
+    </original_instruction>
+    <failed_attempt>
+    {output}
+    </failed_attempt>
+    <failure_diagnosis>
+    {previous_reasoning}
+    </failure_diagnosis>
+</input_data>
 
-<previous_critique>
-{previous_reasoning}
-</previous_critique>
+<constraints>
+- **Analysis**: Identify exactly where the previous attempt failed (misinterpretation, missing info, format error).
+- **Refinement**: Generate an improved response that fully addresses the instruction.
+- **Honesty**: If information is genuinely unavailable, state the limitation instead of guessing.
+- **Threshold**: The goal is to surpass a confidence of {TIER1_THRESHOLD}.
+- **Output Format**: Return ONLY the improved content text (no preamble).
+</constraints>
 
-Your task:
-1. Critically analyze why the previous output was insufficient.
-2. Generate a significantly improved response that addresses the instruction completely.
-3. If you lack information, clearly state what is missing instead of hallucinating.
+<task>Generate the improved response based on the diagnosis.</task>"""
 
-Output ONLY the improved response content.
-"""
     try:
         messages = [
             SystemMessage(content=f"You are an expert {agent_type} refining your previous work."),

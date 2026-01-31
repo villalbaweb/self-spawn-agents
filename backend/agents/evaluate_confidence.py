@@ -25,34 +25,36 @@ async def evaluate_confidence(instruction: str, output: str, config: RunnableCon
         config: Optional RunnableConfig with thread_id
         root_task_id: Optional root task ID for cost attribution (overrides config thread_id)
     """
-    evaluation_prompt = f"""Evaluate how well the following output addresses the given instruction.
-    
-<instruction>
-{instruction}
-</instruction>
+    evaluation_prompt = f"""<role>Precision Quality Evaluator</role>
+<objective>Assess the fidelity and completeness of the agent's output relative to the original instruction.</objective>
 
-<output>
-{output[:2000]}  # Truncated for evaluation
-</output>
+<input_data>
+    <user_instruction>
+    {instruction}
+    </user_instruction>
+    <candidate_output>
+    {output[:2000]}
+    </candidate_output>
+</input_data>
 
-Rate the output on a scale of 0.0 to 1.0 based on:
-1. **Goal Achievement (CRITICAL):** Did the agent actually FIND what was asked for?
-   - If the user asked for X, and the agent says "X does not exist" or "I cannot find X", the score MUST be low (< 0.2).
-   - We rate based on "Mission Success", not just "Fact Correctness".
+<constraints>
+- Rate the output on a scale from 0.0 to 1.0.
+- **Criteria**:
+    1. **Goal Achievement**: Did the agent fulfill the core mission? If it says "not found" or "cannot find", the score must be <= 0.2.
+    2. **Completeness**: Are all parts of the instruction addressed?
+    3. **Accuracy**: Is the info reliable and non-vague?
+- **Workflow**: Perform a critical analysis of the output (Reasoning) BEFORE providing the final score.
+- **Output Format**: Return ONLY a JSON object.
+</constraints>
 
-2. **Completeness:** Does it fully address all parts of the instruction?
-3. **Accuracy:** Is the information reliable and not vague?
+<task>
+Analyze the <candidate_output> against the <user_instruction> and produce the JSON response:
+{{
+  "reasoning": "Detailed justification...",
+  "confidence_score": 0.X
+}}
+</task>"""
 
-**Scoring Guide:**
-- 0.9-1.0: Perfect, complete answer found.
-- 0.7-0.8: Good answer, minor details missing.
-- 0.5-0.6: Partial answer found.
-- 0.1-0.2: "Not found", "Does not exist", or refusal to answer.
-- 0.0: Hallucination or complete failure.
-
-Respond with ONLY a JSON object, no other text:
-{{"confidence_score": 0.X, "reasoning": "Brief explanation"}}
-"""
     try:
         messages = [
             SystemMessage(content="You are a quality evaluator. Output ONLY valid JSON."),

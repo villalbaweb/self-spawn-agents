@@ -36,21 +36,34 @@ async def generate_dynamic_system_prompt(instruction: str, agent_type: str, conf
     - python_repl(code: str): Use this to execute Python code for calculations, data processing, or generating outputs.
       The code MUST print results to stdout. Always use this tool when asked to "calculate", "compute", or "write a script"."""
 
-    meta_prompt = f"""You are an expert Prompt Engineer.
-    Your goal is to create a high-quality system prompt for an AI agent acting as a "{agent_type}".
-    
-    The user's instruction to the agent is: "{instruction}"
+    meta_prompt = f"""<role>Expert Prompt Engineer</role>
+<objective>Generate a high-quality system prompt for an AI agent specialized as a "{agent_type}".</objective>
+
+<input_data>
+    <target_role_name>
+    {agent_type}
+    </target_role_name>
+    <primary_instruction_content>
+    {instruction}
+    </primary_instruction_content>
+    <available_tools_context>
     {tool_context}
-    
-    Create a system prompt that STRICTLY follows the "Tagged Prompt" pattern:
-    1. <role>: Define the persona, expertise, and behavioral tone.
-    2. <objective>: A clear, single-sentence high-level goal.
-    3. <constraints>: A checklist of technical, logical, and formatting rules. If tools are available, include when to use them.
-    
-    You must also instruct the agent that it will receive its input in a <task> tag, and if provided, specific data in an <input_data> tag.
-    
-    Output ONLY the system prompt text wrapped in the XML tags.
-    """
+    </available_tools_context>
+</input_data>
+
+<constraints>
+- **Pattern Compliance**: The output prompt MUST strictly follow the "Tagged Prompt" pattern:
+    1. <role>: Define persona/expertise.
+    2. <objective>: Single-sentence goal.
+    3. <constraints>: Technical/logical rules.
+    4. <task>: The trigger for action.
+- **Input Handling**: The generated prompt must expect its specific mission in a <task> tag and context in an <input_data> tag.
+- **Tool Integration**: If <available_tools_context> is not empty, you MUST write specific constraints on when and how to use those tools.
+- **Output Format**: Return the result wrapped in a code block or specific tag for easy extraction.
+</constraints>
+
+<task>Analyze the requirements and write the specialized system prompt.</task>"""
+
     
     messages = [
         SystemMessage(content="You are a helpful assistant that generates system prompts."),
@@ -105,10 +118,11 @@ async def generic_worker_node(state: dict, instruction: str, agent_type: str, co
     except Exception as e:
         print(f"⚠️ Failed to generate dynamic prompt ({e}). Using fallback.")
         sys_prompt = f"""<role>Expert {agent_type}</role>
-<objective>Execute the user's instruction with high precision and expertise.</objective>
+<objective>Execute the provided task with maximum precision, adhering to all technical and professional standards.</objective>
 <constraints>
-- Output the result directly.
+- Deliver the result directly without unnecessary conversational filler.
 - Maintain a professional and technical tone.
+- If the task is unclear, state exactly what information is missing.
 </constraints>"""
 
     user_content = f"""<task>

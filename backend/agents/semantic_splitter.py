@@ -12,6 +12,7 @@ class SubtaskList(BaseModel):
     subject: str = Field(..., description="The primary subject/product mentioned in the task (e.g., 'luxury e-bikes', 'cooking blog')")
     subtasks: List[str] = Field(..., description="A list of atomic subtasks (max 5) starting with a verb.")
     deliverables: List[str] = Field(default_factory=list, description="Explicit outputs requested (e.g., 'Marketing Roadmap', 'Executive Summary PDF', 'Python script')")
+    reasoning: str = Field(..., description="Brief explanation of the decomposition strategy.")
 
 async def semantic_splitter_node(state: AgentState, config: RunnableConfig = None) -> Dict[str, Any]:
     """
@@ -28,19 +29,28 @@ async def semantic_splitter_node(state: AgentState, config: RunnableConfig = Non
     
     # Improved prompt with subject and deliverables extraction + search optimization
     sys_prompt = """<role>Expert Task Decomposer</role>
-<objective>Analyze the user's task, extract the primary subject, required deliverables, and break it down into atomic subtasks optimized for information retrieval.</objective>
+<objective>Analyze the user's task to extract the primary subject, identify explicit deliverables, and decompose it into atomic, search-optimized subtasks.</objective>
+
 <constraints>
-- Output a JSON object with "subject", "subtasks", and "deliverables".
-- CRITICAL: Extract the SPECIFIC subject mentioned in the task (preserve exact terminology).
-- Extract EXPLICIT deliverables mentioned in the task (e.g., "PDF", "script", "roadmap", "summary").
-- Each subtask should start with a verb.
-- Max 5 subtasks.
-- SEARCH OPTIMIZATION: Subtasks may be used as search queries. Make them specific and actionable:
-  - Include the subject and relevant context (location, industry, etc.) when mentioned in the task
-  - Prefer concrete terms (companies, products, examples) over abstract terms (regulations, frameworks)
-  - Format as natural questions or search phrases that would return useful results
+- **Subject**: Extract the SPECIFIC core subject (brand, company, technology, niche). Keep it concise but exact.
+- **Subtasks**:
+    - Maximum 5 subtasks.
+    - Each must start with an actionable verb.
+    - SEARCH OPTIMIZATION: Subtasks will be used as search queries. Include relevant context (industry, location) if present.
+    - Prefer concrete identifiers over vague instructions.
+- **Deliverables**: Identify explicit outputs requested (e.g., "Table", "Python Script", "300-word summary").
+- **Reasoning**: Provide a brief justification (Reasoning-to-Result).
+- **Output Format**: Return a valid JSON object with this structure:
+  {
+    "reasoning": "Brief justification...",
+    "subject": "Core subject",
+    "deliverables": ["List", "of", "items"],
+    "subtasks": ["Subtask 1", "Subtask 2"]
+  }
 </constraints>
-<task>Decompose the input into actionable subtasks while preserving the specific subject and identifying deliverables.</task>"""
+
+<task>Decompose the provided input_data into the structured JSON format.</task>"""
+
 
     messages = [
         SystemMessage(content=sys_prompt),

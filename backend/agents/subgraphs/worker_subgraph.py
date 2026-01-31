@@ -75,19 +75,28 @@ async def create_mini_plan(task: str, subject: str, root_task_id: str = None, co
     Lightweight planner that creates 2-4 parallel tasks.
     Much simpler than full supervisor - no dependencies, no recursive flags.
     """
-    plan_prompt = f"""You are a lightweight task planner. Break this task into 2-4 PARALLEL sub-tasks.
+    plan_prompt = f"""<role>Lightweight Task Planner</role>
+<objective>Decompose the provided task into 2-4 parallel, atomic sub-tasks that can be executed independently.</objective>
 
-<subject>{subject}</subject>
-<task>{task}</task>
+<input_data>
+    <core_subject>
+    {subject}
+    </core_subject>
+    <grand_task>
+    {task}
+    </grand_task>
+</input_data>
 
-RULES:
-- Maximum 4 sub-tasks (prefer 2-3)
-- All tasks run in PARALLEL (no dependencies)
-- Each task should be completable by a single agent
-- Agent types: Researcher (search/research), Coder (code/implementation), Reviewer (review/test)
-- Keep instructions focused and specific
+<constraints>
+- **Parallelism**: All sub-tasks must be able to run at the same time (no sequential dependencies).
+- **Scope**: Maximum 4 tasks (prefer 2-3).
+- **Agent Assignment**: Utilize only the following types: Researcher, Coder, Reviewer.
+- **Output**: Return a valid JSON object matching the `MiniPlan` schema.
+- **Forced CoT**: In the "reasoning" field, explain WHY this decomposition is efficient and confirm no dependencies exist.
+</constraints>
 
-Output a JSON object with "tasks" array and "reasoning" string."""
+<task>Generate the parallel execution plan.</task>"""
+
 
     try:
         messages = [
@@ -409,11 +418,20 @@ async def should_decompose(task: str, config: RunnableConfig = None, root_task_i
     # Uncertain (1-2 indicators) - use quick LLM check
     try:
         print(f"   [should_decompose] Uncertain ({total_matches} indicators), asking LLM...")
-        check_prompt = f"""Does this task need to be broken into 2+ parallel sub-tasks, or can ONE agent handle it?
+        check_prompt = f"""<role>Task Complexity Classifier</role>
+<objective>Determine if the following task requires decomposition into multiple parallel steps or if it can be handled by a single specialist agent.</objective>
 
-Task: {task[:500]}
+<input_data>
+{task[:500]}
+</input_data>
 
-Reply with ONLY "DECOMPOSE" or "SINGLE"."""
+<constraints>
+- Reply with EXACTLY one of: "DECOMPOSE" or "SINGLE".
+- Use "DECOMPOSE" if the task mentions multiple distinct components, layers (e.g., frontend AND backend), or requires disparate search paths.
+- Use "SINGLE" for atomic operations or simple data retrieval.
+</constraints>
+
+<task>Classify the task complexity.</task>"""
         
         messages = [
             SystemMessage(content="You classify task complexity. One word answer only."),

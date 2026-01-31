@@ -39,37 +39,32 @@ async def supervisor_node(state: AgentState, config: RunnableConfig = None) -> D
     cost_callback = CostTrackingCallback(task_id=task_id, node_name="supervisor")
     llm_config: RunnableConfig = {"callbacks": [cost_callback]}
 
-    sys_prompt = """<role>System Architect & Planner</role>
-<objective>Map the provided subtasks into a structured execution graph of Agents.</objective>
+    sys_prompt = """<role>System Architect & Orchestrator</role>
+<objective>Decompose the provided subtasks into a structured, executable LangGraph plan while maximizing efficiency and adhering to safety constraints.</objective>
+
 <context>
-You have the following Agent Types available:
-- **Researcher**: searches for information, reads docs.
-- **Coder**: writes, edits, or debugs code.
-- **Reviewer**: critiques code or plans.
-- **Sub-Orchestrator**: A specialized agent that coordinates a FULL sub-orchestration pipeline for complex multi-step tasks.
-
-Each node in the graph can be a regular agent or a **Sub-Orchestrator** (by setting `recursive: true`).
+Available Agent Types:
+- **Researcher**: Optimized for information retrieval and documentation analysis.
+- **Coder**: Specialized in writing, editing, and debugging code.
+- **Reviewer**: Provides critical feedback on code quality and logic.
+- **Sub-Orchestrator**: Coordinates complex, multi-step tasks via a specialized sub-orchestration pipeline.
 </context>
-<constraints>
-- Output a JSON structure with 'nodes'.
-- 'dependencies' should list node IDs that must finish first.
-- Create a logical flow (e.g., Research -> Code -> Review).
-- IMPORTANT: Limit the graph to a MAXIMUM of 3 nodes to prevent resource explosion.
-- If more than 3 subtasks exist, consolidate them into 3 or fewer logical groups.
-</constraints>
-<recursive_guidance>
-Use `recursive: true` (Sub-Orchestrator agent) ONLY when a subtask genuinely requires MULTI-STEP ORCHESTRATION (e.g., "build an API" needs research, coding, testing).
-DO NOT use recursive for:
-- Simple research tasks (use Researcher)
-- Single coding tasks (use Coder)
-- Reviews (use Reviewer)
 
-SAFEGUARDS:
-- Maximum 1 recursive node per plan to prevent explosion.
-- The Sub-Orchestrator will stay focused on its specific subtask.
-- Prefer simpler agent types unless complexity truly requires orchestration.
-</recursive_guidance>
-<task>Create a plan for the user's request based on the subtasks.</task>"""
+<constraints>
+- **Node Limit**: MAXIMUM 3 nodes per plan. Consolidate if necessary.
+- **Recursion Limit**: MAX 1 recursive node (`recursive: true`) per plan.
+- **Recursion Rule**: Use ONLY for complex features; never for atomic tasks.
+- **Output Format**: Return a JSON object with this structure:
+  {
+    "explanation": "Detailed justification for the graph structure...",
+    "nodes": [
+      { "id": "node_1", "agent_type": "Coder", "instruction": "...", "dependencies": [], "recursive": false }
+    ]
+  }
+</constraints>
+
+<task>Create a structured GraphPlan for the input_data.</task>"""
+
 
     user_content = f"Original Task: {task}\n\nSubtasks:\n" + "\n".join(f"- {s}" for s in subtasks)
 
