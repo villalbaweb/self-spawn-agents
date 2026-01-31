@@ -30,9 +30,9 @@ This plan addresses the critical deficiencies and pending items identified acros
     *   **Action:** Add a `summarization` node to `worker_subgraph.py` return path to compress child results.
     *   **Derived from:** [State of Play Level 3 (High Fidelity Pilot).md](file:///d:/Git/self-spawn-agents/ReadMe/To%20Do/State%20of%20Play%20Level%203%20(High%20Fidelity%20Pilot).md#L35)
 
-- [ ] **6. Context Engineering & Prompt Quality (Global)**
+- [x] **6. Context Engineering & Prompt Quality (Global)**
     *   **Goal:** Improve agent performance and reliability via best-practice prompting.
-    *   **Action:** Audit all agent system prompts (supervisor, workers, synthesizer) for CO-T and explicit constraints.
+    *   **Action:** Deployed "Tagged Prompt" pattern and "Instructional Architecture" across all agents; enforced Forced CoT and standardized context injection in graph compiler.
     *   **Derived from:** [User Request]
 
 
@@ -63,6 +63,6 @@ This plan addresses the critical deficiencies and pending items identified acros
 
 #### [MODIFY] All Agent Prompt Definitions
 *   **Belongs to:** 6. Context Engineering & Prompt Quality (Global).
-*   **Description:** Systematic update of prompts across [supervisor_agent.py](file:///d:/Git/self-spawn-agents/backend/agents/supervisor_agent.py), `generic_worker.py`, and [synthesizer.py](file:///d:/Git/self-spawn-agents/backend/agents/synthesizer.py) to enforce best-practice context engineering.
+*   **Description:** Systematic upgrade of all prompts to adhere to the `context_engineering_strategy.md`. Implemented XML tagging, isolated static instructions in `SystemMessage`, and dynamic task data in `HumanMessage`. Verified 100% compliance across orchestration and reliability nodes.
 
 
