@@ -1,6 +1,7 @@
 
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
+from langgraph.checkpoint.memory import MemorySaver
 from agents.graph_compiler import graph_compiler_node
 from agents.state import AgentState
 
@@ -37,7 +38,8 @@ async def test_compiler_node_logic(mock_agent_state):
             "metadata": {"agent_role": role, "status": "completed"}
         }
 
-    with patch("agents.graph_compiler.generic_worker_node", side_effect=mock_worker):
+    with patch("agents.graph_compiler.generic_worker_node", side_effect=mock_worker), \
+         patch("agents.graph_compiler.shared_memory.memory", MemorySaver()):
         # 2. Act
         result = await graph_compiler_node(mock_agent_state)
     

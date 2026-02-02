@@ -8,3 +8,6 @@ backend/blueprints/*.json
 backend/__pycache__/*
 backend_test/__pycache__/*
 backend/checkpoints.db*
+**/__pycache__
+**/*.pyc
+

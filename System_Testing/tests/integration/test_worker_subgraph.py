@@ -9,7 +9,10 @@ Verifies the lightweight mini-orchestration flow:
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
+import sys
 from agents.subgraphs import worker_subgraph, build_worker_subgraph, WorkerState
+# Access the module explicitly to avoid shadowing by the CompiledStateGraph object
+worker_subgraph_module = sys.modules["agents.subgraphs.worker_subgraph"]
 from agents.subgraphs.worker_subgraph import (
     execute_node,
     validate_node,
@@ -133,7 +136,7 @@ class TestMiniPlanner:
             structured_mock.ainvoke = AsyncMock(return_value=mock_plan)
             mock_llm.with_structured_output.return_value = structured_mock
             
-            result = await create_mini_plan("Build auth with OAuth2 and JWT", "Auth System")
+            result, _ = await create_mini_plan("Build auth with OAuth2 and JWT", "Auth System")
             
             assert len(result.tasks) == 2
             assert result.tasks[0].id == "task_1"
@@ -144,7 +147,7 @@ class TestMiniPlanner:
         with patch("agents.subgraphs.worker_subgraph.llm_mini") as mock_llm:
             mock_llm.with_structured_output.side_effect = Exception("API Error")
             
-            result = await create_mini_plan("Some task", "Subject")
+            result, _ = await create_mini_plan("Some task", "Subject")
             
             assert len(result.tasks) == 1
             assert result.tasks[0].id == "fallback_research"
@@ -212,7 +215,7 @@ class TestExecuteNode:
         with patch("agents.subgraphs.worker_subgraph.should_decompose", new_callable=AsyncMock) as mock_decompose, \
              patch("agents.subgraphs.worker_subgraph.generic_worker_node", new_callable=AsyncMock) as mock_worker:
             
-            mock_decompose.return_value = False
+            mock_decompose.return_value = (False, {})
             mock_worker.return_value = mock_result
             
             result = await execute_node(simple_worker_state)
@@ -241,8 +244,13 @@ class TestExecuteNode:
              patch("agents.subgraphs.worker_subgraph.create_mini_plan", new_callable=AsyncMock) as mock_planner, \
              patch("agents.subgraphs.worker_subgraph.generic_worker_node", new_callable=AsyncMock) as mock_worker:
             
-            mock_decompose.return_value = True
-            mock_planner.return_value = mock_plan
+            # Use side_effect to prevent infinite recursion
+            # 1. Main task -> True (decompose)
+            # 2. Sub-task 1 -> False (direct)
+            # 3. Sub-task 2 -> False (direct)
+            # 4. Any subsequent calls (safety) -> False
+            mock_decompose.side_effect = [(True, {}), (False, {}), (False, {}), (False, {}), (False, {})]
+            mock_planner.return_value = (mock_plan, {})
             mock_worker.return_value = mock_worker_result
             
             result = await execute_node(complex_worker_state)
@@ -275,7 +283,7 @@ class TestValidateNode:
         mock_eval = {"confidence_score": 0.9, "confidence_reasoning": "Complete and accurate answer."}
         
         with patch("agents.subgraphs.worker_subgraph.evaluate_confidence", new_callable=AsyncMock) as mock_confidence:
-            mock_confidence.return_value = mock_eval
+            mock_confidence.return_value = (mock_eval, {})
             
             result = await validate_node(simple_worker_state)
             
@@ -313,9 +321,9 @@ class TestWorkerSubgraphIntegration:
              patch("agents.subgraphs.worker_subgraph.generic_worker_node", new_callable=AsyncMock) as mock_worker, \
              patch("agents.subgraphs.worker_subgraph.evaluate_confidence", new_callable=AsyncMock) as mock_eval:
             
-            mock_decompose.return_value = False
+            mock_decompose.return_value = (False, {})
             mock_worker.return_value = mock_worker_result
-            mock_eval.return_value = mock_confidence
+            mock_eval.return_value = (mock_confidence, {})
             
             result = await worker_subgraph.ainvoke(simple_worker_state)
             
@@ -339,6 +347,9 @@ class TestRecursiveSpawning:
     
     @pytest.mark.asyncio
     async def test_complex_mini_task_spawns_child_subgraph(self, complex_worker_state):
+        print(f"Module Type: {type(worker_subgraph_module)}")
+        print(f"Module Repr: {worker_subgraph_module}")
+        print(f"Execute Node Module: {execute_node.__module__}")
         """Complex child tasks in mini-plan should spawn recursive subgraphs."""
         # Create a mini-plan where one task is complex enough to recurse
         mock_plan = MiniPlan(
@@ -356,20 +367,21 @@ class TestRecursiveSpawning:
         
         # Track should_decompose calls to verify recursive check
         decompose_calls = []
-        async def mock_decompose(task, config=None):
+        async def mock_decompose(task, config=None, root_task_id=None):
+            print(f"DEBUG MOCK: {task!r}")
             decompose_calls.append(task)
             # First call (main task) returns True to trigger mini-plan
             # Subsequent calls for child tasks
-            if "OAuth2" in task and "refresh" in task:
-                return True  # Complex child task
-            return False
+            if ("OAuth2" in task and "refresh" in task) or "authentication system" in task:
+                return True, {}  # Complex child task
+            return False, {}
         
-        with patch("agents.subgraphs.worker_subgraph.should_decompose", side_effect=mock_decompose), \
+        with patch.object(worker_subgraph_module, "should_decompose", side_effect=mock_decompose), \
              patch("agents.subgraphs.worker_subgraph.create_mini_plan", new_callable=AsyncMock) as mock_planner, \
              patch("agents.subgraphs.worker_subgraph.generic_worker_node", new_callable=AsyncMock) as mock_worker, \
-             patch("agents.subgraphs.worker_subgraph._get_compiled_subgraph") as mock_get_subgraph:
+             patch.object(worker_subgraph_module, "_get_compiled_subgraph") as mock_get_subgraph:
             
-            mock_planner.return_value = mock_plan
+            mock_planner.return_value = (mock_plan, {})
             mock_worker.return_value = mock_worker_result
             
             # Mock the recursive subgraph call
@@ -400,7 +412,7 @@ class TestRecursiveSpawning:
             with patch("agents.subgraphs.worker_subgraph.should_decompose", new_callable=AsyncMock) as mock_decompose, \
                  patch("agents.subgraphs.worker_subgraph.generic_worker_node", new_callable=AsyncMock) as mock_worker:
                 
-                mock_decompose.return_value = True  # Would want to decompose
+                mock_decompose.return_value = (True, {})  # Would want to decompose
                 mock_worker.return_value = {"output": "Direct execution", "metadata": {}}
                 
                 result = await execute_node(complex_worker_state)

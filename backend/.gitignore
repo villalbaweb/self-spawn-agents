@@ -138,3 +138,6 @@ dmypy.json
 # Editors
 .vscode/
 .idea/
+
+**/__pycache__
+**/*.pyc

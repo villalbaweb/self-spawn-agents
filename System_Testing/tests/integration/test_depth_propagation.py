@@ -5,14 +5,16 @@ import sys
 import os
 
 
+import sys
 from agents.graph_compiler import graph_compiler_node
+graph_compiler_module = sys.modules["agents.graph_compiler"]
 
 class TestDepthPropagation(unittest.IsolatedAsyncioTestCase):
     
-    @patch("backend.agents.graph_compiler.StateGraph") 
+    @patch("agents.graph_compiler.interrupt")
+    @patch.object(graph_compiler_module, "StateGraph")
     @pytest.mark.asyncio
-    @pytest.mark.asyncio
-    async def test_depth_passed_to_dynamic_graph(self, mock_state_graph_cls):
+    async def test_depth_passed_to_dynamic_graph(self, mock_state_graph_cls, mock_interrupt):
         """Verify that graph_compiler_node initializes dynamic graph with depth from parent state."""
         print("\n🧪 Testing Depth Propagation in Graph Compiler...")
         
@@ -22,7 +24,15 @@ class TestDepthPropagation(unittest.IsolatedAsyncioTestCase):
         
         mock_app = AsyncMock()
         mock_workflow.compile.return_value = mock_app
-        mock_app.ainvoke.return_value = {"results": {}} # Mock success
+        mock_app = AsyncMock()
+        mock_workflow.compile.return_value = mock_app
+        mock_app.ainvoke.return_value = {"results": {}}
+        
+        # Mock aget_state to return clean state (no resume needed)
+        mock_state_snapshot = MagicMock()
+        mock_state_snapshot.next = None # Prop 'next' is None
+        mock_state_snapshot.values = {} # Start with empty values so it triggers START path
+        mock_app.aget_state.return_value = mock_state_snapshot
         
         # Input State with specific depth
         parent_state = {

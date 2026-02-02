@@ -1,5 +1,7 @@
 import pytest
 import asyncio
+from unittest.mock import MagicMock, patch, AsyncMock
+from langgraph.checkpoint.memory import MemorySaver
 import sys
 import os
 import json
@@ -52,7 +54,21 @@ Provide implementation details for each component.""",
 
     try:
         print("▶️ Executing graph with Orchestrator node...")
-        result = await graph_compiler_node(state)
+        # Mock shared_memory to avoid "no active connection" error
+        # Use MemorySaver instead of MagicMock
+        # Also mock generic_worker_node to avoid LLM calls
+        mock_worker_result = {
+            "output": "Mocked Worker Output",
+            "metadata": {
+                "agent_role": "Sub-Orchestrator",
+                "status": "completed",
+                "confidence_score": 0.9
+            }
+        }
+        with patch("agents.graph_compiler.shared_memory.memory", MemorySaver()), \
+             patch("agents.subgraphs.worker_subgraph.generic_worker_node", new_callable=AsyncMock) as mock_worker:
+            mock_worker.return_value = mock_worker_result
+            result = await graph_compiler_node(state, config={"configurable": {"thread_id": "test_thread"}})
         
         results = result.get("results", {})
         
