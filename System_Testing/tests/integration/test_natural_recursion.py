@@ -56,7 +56,7 @@ async def test_natural_recursion():
                  recursion_detected = True
 
             # Show progress
-            if kind == "on_chain_start" and name in ["semantic_splitter", "supervisor", "graph_compiler", "confidence_check", "synthesizer"]:
+            if kind == "on_chain_start" and name in ["task_decomposer", "execution_planner", "graph_executor", "human_review_trigger", "synthesizer"]:
                 print(f"▶️ {name}...")
                 
         # Get final state

@@ -4,7 +4,7 @@ from agents.task_decomposer import task_decomposer_node
 from agents.execution_planner import execution_planner_node
 from agents.graph_executor import graph_executor_node
 from agents.synthesizer import synthesizer_node
-from agents.confidence_check import confidence_check_node
+from agents.human_review_trigger import human_review_trigger_node
 
 # --- GRAPH ---
 workflow = StateGraph(AgentState)
@@ -13,7 +13,7 @@ workflow = StateGraph(AgentState)
 workflow.add_node("task_decomposer", task_decomposer_node)
 workflow.add_node("execution_planner", execution_planner_node)
 workflow.add_node("graph_executor", graph_executor_node)
-workflow.add_node("confidence_check", confidence_check_node)
+workflow.add_node("human_review_trigger", human_review_trigger_node)
 workflow.add_node("synthesizer", synthesizer_node)
 
 workflow.set_entry_point("task_decomposer")
@@ -21,8 +21,8 @@ workflow.set_entry_point("task_decomposer")
 # Flow: Decomposer -> Planner -> Executor -> Confidence Check -> Synthesizer -> END
 workflow.add_edge("task_decomposer", "execution_planner")
 workflow.add_edge("execution_planner", "graph_executor")
-workflow.add_edge("graph_executor", "confidence_check")
-workflow.add_edge("confidence_check", "synthesizer")
+workflow.add_edge("graph_executor", "human_review_trigger")
+workflow.add_edge("human_review_trigger", "synthesizer")
 workflow.add_edge("synthesizer", END)
 
 # Lazy compilation - app_graph is compiled after checkpointer is initialized

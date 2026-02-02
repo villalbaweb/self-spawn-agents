@@ -127,12 +127,12 @@ async def run_orchestrator(request: OrchestratorRequest):
                         yield f"data: {json.dumps({'type': 'usage_stats', 'stats': real_stats})}\n\n"
 
                 # We care about when nodes start for progress logs
-                if kind == "on_chain_start" and name in ["semantic_splitter", "supervisor", "graph_compiler", "confidence_check", "synthesizer"]:
+                if kind == "on_chain_start" and name in ["task_decomposer", "execution_planner", "graph_executor", "human_review_trigger", "synthesizer"]:
                     display_names = {
-                        "semantic_splitter": "Decomposing task into subtasks...",
-                        "supervisor": "Planning execution graph with Supervisor...",
-                        "graph_compiler": "Compiling and Executing Dynamic Graph...",
-                        "confidence_check": "Evaluating results confidence...",
+                        "task_decomposer": "Decomposing task into subtasks...",
+                        "execution_planner": "Planning execution graph...",
+                        "graph_executor": "Compiling and Executing Dynamic Graph...",
+                        "human_review_trigger": "Evaluating results confidence...",
                         "synthesizer": "Synthesizing final report...",
                     }
                     msg = display_names.get(name, f"Executing {name}...")
@@ -484,10 +484,10 @@ async def fork_run_handler(run_id: str, request: ForkRequest):
                     kind = event.get("event")
                     name = event.get("name")
                     
-                    if kind == "on_chain_start" and name in ["graph_compiler", "confidence_check", "synthesizer"]:
+                    if kind == "on_chain_start" and name in ["graph_executor", "human_review_trigger", "synthesizer"]:
                         display_names = {
-                            "graph_compiler": "Resuming execution graph...",
-                            "confidence_check": "Evaluating results confidence...",
+                            "graph_executor": "Resuming execution graph...",
+                            "human_review_trigger": "Evaluating results confidence...",
                             "synthesizer": "Synthesizing final report...",
                         }
                         msg = display_names.get(name, f"Executing {name}...")
@@ -580,10 +580,10 @@ async def resume_run(run_id: str, request: ResumeRequest):
                     if output and isinstance(output, dict):
                         latest_state.update(output)
 
-                if kind == "on_chain_start" and name in ["graph_compiler", "confidence_check", "synthesizer"]:
+                if kind == "on_chain_start" and name in ["graph_executor", "human_review_trigger", "synthesizer"]:
                     display_names = {
-                        "graph_compiler": "Resuming execution graph...",
-                        "confidence_check": "Evaluating results confidence...",
+                        "graph_executor": "Resuming execution graph...",
+                        "human_review_trigger": "Evaluating results confidence...",
                         "synthesizer": "Synthesizing final report...",
                     }
                     msg = display_names.get(name, f"Executing {name}...")

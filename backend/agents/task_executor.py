@@ -89,7 +89,7 @@ async def generate_dynamic_system_prompt(instruction: str, agent_type: str, conf
 
 from agents.tools.web_search import web_search
 from agents.tools.python_repl import python_repl
-from agents.self_correction import simple_self_correct
+from agents.quality_refiner import quality_refiner_node
 from langgraph.types import interrupt
 
 async def task_executor_node(state: dict, instruction: str, agent_type: str, config: RunnableConfig = None) -> dict:
@@ -234,8 +234,8 @@ async def task_executor_node(state: dict, instruction: str, agent_type: str, con
             usage_stats_update[k] = usage_stats_update.get(k, 0) + v
         
         if confidence_score < TIER1_THRESHOLD:
-             # Trigger self-correction (Tier 1)
-             correction_res = await simple_self_correct(instruction, final_output, confidence_reasoning, agent_type, config, root_task_id=task_id)
+             # Trigger quality refinement (Tier 1)
+             correction_res = await quality_refiner_node(instruction, final_output, confidence_reasoning, agent_type, config, root_task_id=task_id)
              final_output = correction_res["output"]
              
              # Merge correction usage

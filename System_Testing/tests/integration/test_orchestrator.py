@@ -65,7 +65,7 @@ async def test_graph_direct():
              patch("agents.task_decomposer.llm") as mock_splitter_llm, \
              patch("agents.execution_planner.llm") as mock_supervisor_llm, \
              patch("agents.synthesizer.llm") as mock_synthesizer_llm, \
-             patch("agents.confidence_check.interrupt") as mock_interrupt, \
+             patch("agents.human_review_trigger.interrupt") as mock_interrupt, \
              patch("agents.graph_executor.task_executor_node", new_callable=AsyncMock) as mock_worker:
             
             # Setup mocks

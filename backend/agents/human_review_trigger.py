@@ -2,7 +2,7 @@ from typing import Dict, Any
 from langgraph.types import interrupt
 from core.state.orchestrator_state import AgentState
 
-async def confidence_check_node(state: AgentState) -> Dict[str, Any]:
+async def human_review_trigger_node(state: AgentState) -> Dict[str, Any]:
     """
     Calculates aggregate confidence and triggers an interrupt if below threshold.
     """
