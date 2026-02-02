@@ -1,6 +1,6 @@
 
 import pytest
-from agents.state import AgentState
+from core.state.orchestrator_state import AgentState
 from tests.utils.mocks import MockLLM
 
 # --- Example Node for Testing ---

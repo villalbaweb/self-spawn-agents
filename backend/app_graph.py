@@ -1,7 +1,7 @@
 from langgraph.graph import StateGraph, END
-from agents.state import AgentState
+from core.state.orchestrator_state import AgentState
 from agents.semantic_splitter import semantic_splitter_node
-from agents.supervisor_agent import supervisor_node
+from agents.supervisor import supervisor_node
 from agents.graph_compiler import graph_compiler_node
 from agents.synthesizer import synthesizer_node
 from agents.confidence_check import confidence_check_node
@@ -32,7 +32,7 @@ def get_app_graph():
     """Get the compiled graph. Must be called after init_checkpointer()."""
     global _compiled_graph
     if _compiled_graph is None:
-        from agents.shared_memory import memory
+        from core.persistence.checkpointer import memory
         if memory is None:
             raise RuntimeError("Checkpointer not initialized. Call init_checkpointer() first.")
         _compiled_graph = workflow.compile(checkpointer=memory)

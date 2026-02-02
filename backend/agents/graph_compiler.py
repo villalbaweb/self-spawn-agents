@@ -1,13 +1,13 @@
 from typing import Dict, Any, Annotated, List
 from langgraph.graph import StateGraph, START, END
 from langchain_core.runnables import RunnableConfig
-from agents.state import AgentState, replace, merge_lists
-from agents.workers.generic import generic_worker_node
-from agents.blueprint import AppBlueprint, AgentInfo, EdgeInfo
-from agents import shared_memory
+from core.state.orchestrator_state import AgentState, replace, merge_lists
+from agents.workers.generic_worker import generic_worker_node
+from schemas.blueprint import AppBlueprint, AgentInfo, EdgeInfo
+from core.persistence import checkpointer
 from agents.subgraphs import worker_subgraph
-from agents.subgraphs.state import WorkerState
-from agents.dependencies import MAX_RECURSION_DEPTH
+from core.state.worker_state import WorkerState
+from config.settings import MAX_RECURSION_DEPTH
 from langgraph.types import interrupt, Command
 import json
 import uuid
@@ -389,7 +389,7 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
         print(f"⚠️ Failed to save blueprint: {e}")
             
     # Compile with SHARED memory (accessed at runtime after initialization)
-    app = workflow.compile(checkpointer=shared_memory.memory)
+    app = workflow.compile(checkpointer=checkpointer.memory)
     
     # --- 2. MANAGE INNER STATE ---
     # Retrieve or Create Persistent Thread ID

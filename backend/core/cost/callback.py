@@ -3,7 +3,7 @@ LangChain Callback Handler for automatic LLM cost tracking.
 
 Captures token usage from LLM calls and integrates with CostTracker.
 """
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone
 from uuid import UUID
 import threading
@@ -11,8 +11,8 @@ import threading
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 
-from agents.cost.models import CostRecord, CostType
-from agents.cost.pricing import ModelPricing
+from core.cost.models import CostRecord, CostType
+from core.cost.pricing import ModelPricing
 
 
 class CostTrackingCallback(BaseCallbackHandler):
@@ -84,7 +84,6 @@ class CostTrackingCallback(BaseCallbackHandler):
             try:
                 for gen_list in response.generations:
                     for gen in gen_list:
-                        # Check for usage_metadata on the message (AIMessage)
                         if hasattr(gen, 'message') and hasattr(gen.message, 'usage_metadata'):
                             usage_meta = gen.message.usage_metadata
                             if usage_meta:
@@ -95,7 +94,6 @@ class CostTrackingCallback(BaseCallbackHandler):
                                     input_tokens = getattr(usage_meta, 'input_tokens', 0) or 0
                                     output_tokens = getattr(usage_meta, 'output_tokens', 0) or 0
                                     
-                                # Get model from response_metadata
                                 if hasattr(gen.message, 'response_metadata') and gen.message.response_metadata:
                                     model = gen.message.response_metadata.get('model_name', model)
                                 break
@@ -104,7 +102,7 @@ class CostTrackingCallback(BaseCallbackHandler):
             except Exception as e:
                 print(f"⚠️ [CostTrackingCallback] Fallback 1 failed: {e}")
         
-        # Fallback 2: Check response_metadata on the first generation (common for certain providers)
+        # Fallback 2: Check response_metadata on the first generation
         if input_tokens == 0 and output_tokens == 0 and response.generations:
             try:
                 first_gen = response.generations[0][0]
@@ -162,11 +160,9 @@ class CostTrackingCallback(BaseCallbackHandler):
     
     def _detect_provider(self, model: str, llm_output: Dict) -> str:
         """Detect provider from model name or response metadata."""
-        # Check explicit provider in output
         if "provider" in llm_output:
             return llm_output["provider"]
         
-        # Infer from model name
         model_lower = model.lower()
         if model_lower.startswith(("gpt-", "o1", "o3")):
             return "openai"

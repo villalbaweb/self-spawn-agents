@@ -6,7 +6,7 @@ import json
 
 # Add backend directory to sys.path
 
-from agents.supervisor_agent import supervisor_node
+from agents.supervisor import supervisor_node
 
 @pytest.mark.asyncio
 @pytest.mark.asyncio

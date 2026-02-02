@@ -43,8 +43,8 @@ class TestBudgetWarning:
                 }
             }
             
-            # Mock shared_memory.memory
-            with patch("agents.graph_compiler.shared_memory") as mock_memory:
+            # Mock checkpointer.memory
+            with patch("agents.graph_compiler.checkpointer") as mock_memory:
                 mock_memory.memory = MagicMock()
                 
                 # We need to mock the entire inner graph execution
@@ -62,10 +62,10 @@ class TestConfidenceWarning:
     @pytest.mark.asyncio
     async def test_low_confidence_warning_triggered(self):
         """When confidence is below TIER2_THRESHOLD, warning should be in metadata."""
-        from agents.workers.generic import generic_worker_node
+        from agents.workers.generic_worker import generic_worker_node
         
         # Mock interrupt to avoid RuntimeError if Tier 3 is triggered
-        with patch("agents.workers.generic.interrupt") as mock_interrupt:
+        with patch("agents.workers.generic_worker.interrupt") as mock_interrupt:
              mock_interrupt.return_value = {"output": "Manual fix"} # Simulate resume
 
         
@@ -74,7 +74,7 @@ class TestConfidenceWarning:
         agent_type = "Analyst"
         
         # Mock LLM to return a simple response
-        with patch("agents.workers.generic.llm") as mock_llm:
+        with patch("agents.workers.generic_worker.llm") as mock_llm:
             mock_llm.bind_tools.return_value = mock_llm
             mock_response = MagicMock()
             mock_response.content = "Some uncertain analysis"
@@ -82,11 +82,11 @@ class TestConfidenceWarning:
             mock_llm.ainvoke = AsyncMock(return_value=mock_response)
             
             # Mock llm_mini for system prompt generation
-            with patch("agents.workers.generic.llm_mini") as mock_mini:
+            with patch("agents.workers.generic_worker.llm_mini") as mock_mini:
                 mock_mini.ainvoke = AsyncMock(return_value=MagicMock(content="<role>Analyst</role>"))
                 
                 # Mock evaluate_confidence to return low score
-                with patch("agents.workers.generic.evaluate_confidence", new_callable=AsyncMock) as mock_eval:
+                with patch("agents.workers.generic_worker.evaluate_confidence", new_callable=AsyncMock) as mock_eval:
                     mock_eval.return_value = ({
                         "confidence_score": 0.4,  # Below TIER2_THRESHOLD (0.5)
                         "confidence_reasoning": "Output lacks specificity"

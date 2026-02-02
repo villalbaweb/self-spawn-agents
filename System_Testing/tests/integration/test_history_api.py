@@ -10,8 +10,8 @@ os.environ["CHECKPOINT_DB_PATH"] = test_db_path
 
 # Import using top-level names assuming backend/ is in PYTHONPATH
 from main import app
-from agents.shared_memory import init_checkpointer, close_checkpointer, memory
-from history import list_runs
+from core.persistence.checkpointer import init_checkpointer, close_checkpointer, get_memory
+from api.history import list_runs
 
 # Remove test DB if exists
 if os.path.exists(test_db_path):
@@ -50,9 +50,9 @@ async def test_history_flow():
     }
     metadata = {"langgraph_node": "test_node"}
     
-    # We need to access the underlying memory object which is available via 'agents.shared_memory.memory'
+    # We need to access the underlying memory object which is available via 'agents.shared_memory'
     # initialized by init_checkpointer
-    from agents.shared_memory import memory as mem
+    mem = get_memory()
     if not mem:
         pytest.fail("Memory verification failed")
         

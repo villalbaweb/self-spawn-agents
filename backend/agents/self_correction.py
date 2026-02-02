@@ -1,8 +1,9 @@
 from typing import Dict, Any
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
-from agents.dependencies import llm, TIER1_THRESHOLD
-from agents.cost import CostTrackingCallback, CostTracker
+from config.llm_providers import llm
+from config.settings import TIER1_THRESHOLD
+from core.cost import CostTrackingCallback, CostTracker
 
 async def simple_self_correct(instruction: str, output: str, previous_reasoning: str, agent_type: str, config: RunnableConfig = None, root_task_id: str = None) -> Dict[str, str]:
     """

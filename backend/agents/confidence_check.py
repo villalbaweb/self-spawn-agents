@@ -1,6 +1,6 @@
 from typing import Dict, Any
 from langgraph.types import interrupt
-from agents.state import AgentState
+from core.state.orchestrator_state import AgentState
 
 async def confidence_check_node(state: AgentState) -> Dict[str, Any]:
     """

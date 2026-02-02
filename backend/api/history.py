@@ -3,8 +3,8 @@ import uuid
 import json
 import aiosqlite
 from typing import List, Dict, Optional, Any, Tuple
-from agents import shared_memory 
-from agents.shared_memory import CHECKPOINT_DB_PATH
+from core.persistence import checkpointer
+from core.persistence.checkpointer import CHECKPOINT_DB_PATH
 
 async def list_runs() -> List[Dict[str, Any]]:
     """
@@ -38,12 +38,12 @@ async def list_runs() -> List[Dict[str, Any]]:
                         }
                         
                         # Enrich with task name from memory state
-                        if shared_memory.memory:
+                        if checkpointer.memory:
                             try:
                                 config = {"configurable": {"thread_id": run_id}}
                                 # aget_tuple returns (checkpoint, metadata, parent_config)
                                 # We need the channel values from the checkpoint
-                                state_tuple = await shared_memory.memory.aget_tuple(config)
+                                state_tuple = await checkpointer.memory.aget_tuple(config)
                                 if state_tuple and state_tuple.checkpoint:
                                     vals = state_tuple.checkpoint.get("channel_values", {})
                                     run_info["task"] = vals.get("task", "Untitled Task")
@@ -69,7 +69,7 @@ async def list_runs() -> List[Dict[str, Any]]:
 
 async def get_run_details(run_id: str) -> Optional[Dict[str, Any]]:
     """Get details for a specific run including its graph state snapshot."""
-    if not shared_memory.memory:
+    if not checkpointer.memory:
         return None
         
     config = {"configurable": {"thread_id": run_id}}
@@ -80,7 +80,7 @@ async def get_run_details(run_id: str) -> Optional[Dict[str, Any]]:
         # To get high level state we usually use graph.aget_state, but we don't have the graph here easily?
         # Actually we can use memory.aget(config)
         
-        checkpoint = await shared_memory.memory.aget(config)
+        checkpoint = await checkpointer.memory.aget(config)
         if not checkpoint:
             return None
             
@@ -98,7 +98,7 @@ async def fork_run(source_run_id: str, checkpoint_id: str = None) -> str:
     Fork a run from a specific point to a new thread.
     Returns the new run_id.
     """
-    if not shared_memory.memory:
+    if not checkpointer.memory:
         raise RuntimeError("Checkpointer not initialized")
 
     new_run_id = str(uuid.uuid4())
@@ -113,7 +113,7 @@ async def fork_run(source_run_id: str, checkpoint_id: str = None) -> str:
     # 1. Get the source checkpoint
     # Use memory.aget_tuple if available or aget
     # memory.aget returns specific checkpoint data if found
-    checkpoint_tuple = await shared_memory.memory.aget_tuple(source_config)
+    checkpoint_tuple = await checkpointer.memory.aget_tuple(source_config)
     
     if not checkpoint_tuple or not checkpoint_tuple.checkpoint:
         raise ValueError(f"No checkpoint found for {source_run_id}")
@@ -135,7 +135,7 @@ async def fork_run(source_run_id: str, checkpoint_id: str = None) -> str:
     # a specific state. But to make it "resumable" immediately as if it was there, 
     # we inject the state.
     
-    await shared_memory.memory.aput(dest_config, current_checkpoint, new_metadata, {})
+    await checkpointer.memory.aput(dest_config, current_checkpoint, new_metadata, {})
     
     print(f"🍴 Forked run {source_run_id} -> {new_run_id}")
     return new_run_id
@@ -149,14 +149,14 @@ async def find_checkpoint_for_rewind(run_id: str, node_id: str) -> Optional[Tupl
     2. If yes, find the checkpoint before it started.
     3. If no, and there is an inner_thread_id, recurse into that thread.
     """
-    if not shared_memory.memory:
+    if not checkpointer.memory:
         return None
         
     config = {"configurable": {"thread_id": run_id, "checkpoint_ns": ""}}
     print(f"🔍 SEARCHING: Node '{node_id}' in thread '{run_id}'")
     
     # 1. Get latest state to see where we are
-    latest_tuple = await shared_memory.memory.aget_tuple(config)
+    latest_tuple = await checkpointer.memory.aget_tuple(config)
     if not latest_tuple or not latest_tuple.checkpoint:
         return None
         
@@ -173,7 +173,7 @@ async def find_checkpoint_for_rewind(run_id: str, node_id: str) -> Optional[Tupl
         # We look for the newest checkpoint where 'node_id' is NOT yet in 'results'.
         
         checkpoints = []
-        async for cp in shared_memory.memory.alist(config):
+        async for cp in checkpointer.memory.alist(config):
             checkpoints.append(cp)
         
         # Newest first. Find the first checkpoint where the node results don't exist yet
@@ -211,14 +211,14 @@ async def get_nodes_to_invalidate(run_id: str, target_node_id: str) -> List[str]
     Get the list of node IDs that need to be invalidated when rewinding to target_node_id.
     This includes the target node and all nodes that depend on it (directly or transitively).
     """
-    if not shared_memory.memory:
+    if not checkpointer.memory:
         return [target_node_id]
     
     config = {"configurable": {"thread_id": run_id, "checkpoint_ns": ""}}
     
     try:
         # Get the graph plan from the latest checkpoint
-        latest_state = await shared_memory.memory.aget_tuple(config)
+        latest_state = await checkpointer.memory.aget_tuple(config)
         if not latest_state or not latest_state.checkpoint:
             return [target_node_id]
         

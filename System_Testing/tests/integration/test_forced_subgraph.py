@@ -65,7 +65,7 @@ Provide implementation details for each component.""",
                 "confidence_score": 0.9
             }
         }
-        with patch("agents.graph_compiler.shared_memory.memory", MemorySaver()), \
+        with patch("agents.graph_compiler.checkpointer.memory", MemorySaver()), \
              patch("agents.subgraphs.worker_subgraph.generic_worker_node", new_callable=AsyncMock) as mock_worker:
             mock_worker.return_value = mock_worker_result
             result = await graph_compiler_node(state, config={"configurable": {"thread_id": "test_thread"}})

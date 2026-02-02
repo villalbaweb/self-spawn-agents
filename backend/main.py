@@ -4,11 +4,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
-from agent import app_graph
+from app_graph import app_graph
 import json
 from agents.semantic_splitter import semantic_splitter_node
-from agents.shared_memory import init_checkpointer, close_checkpointer
-from agents.cost import CostTracker, CostTrackingCallback, BudgetExceededError
+from core.persistence.checkpointer import init_checkpointer, close_checkpointer
+from core.cost import CostTracker, CostTrackingCallback, BudgetExceededError
 
 import os
 
@@ -354,7 +354,7 @@ async def hydrate_state(request: HydrateRequest):
     try:
         if request.source_thread_id:
             # Fork from existing run
-            from history import fork_run
+            from api.history import fork_run
             # fork_run creates a NEW thread ID internally, but we want to control it or get it back.
             # actually fork_run generates a uuid return it.
             # let's just use fork_run directly if source provided
@@ -385,7 +385,7 @@ async def hydrate_state(request: HydrateRequest):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-from history import list_runs, fork_run, find_checkpoint_for_rewind
+from api.history import list_runs, fork_run, find_checkpoint_for_rewind
 
 @app.get("/api/runs")
 async def get_runs_handler():
@@ -446,7 +446,7 @@ async def fork_run_handler(run_id: str, request: ForkRequest):
 
         # 3. Apply Node-Specific Invalidation
         if request.node_id:
-            from history import get_nodes_to_invalidate
+            from api.history import get_nodes_to_invalidate
             nodes_to_clear = await get_nodes_to_invalidate(target_thread_id, request.node_id)
             print(f"🔄 Invalidating {len(nodes_to_clear)} results in {target_thread_fork_id}")
             

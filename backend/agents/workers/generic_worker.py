@@ -1,8 +1,10 @@
 from langchain_core.messages import SystemMessage, HumanMessage
-from agents.dependencies import llm, llm_mini, TIER1_THRESHOLD, TIER2_THRESHOLD, TIER3_THRESHOLD, safe_ainvoke
-from agents.evaluate_confidence import evaluate_confidence
+from config.llm_providers import llm, llm_mini
+from config.settings import TIER1_THRESHOLD, TIER2_THRESHOLD, TIER3_THRESHOLD
+from utils.rate_limiter import safe_ainvoke
+from agents.confidence_evaluator import evaluate_confidence
 from langchain_core.runnables import RunnableConfig
-from agents.cost import CostTrackingCallback, CostTracker
+from core.cost import CostTrackingCallback, CostTracker
 import re
 import time
 
@@ -87,7 +89,7 @@ async def generate_dynamic_system_prompt(instruction: str, agent_type: str, conf
 
 from agents.tools.web_search import web_search
 from agents.tools.python_repl import python_repl
-from agents.self_correct import simple_self_correct
+from agents.self_correction import simple_self_correct
 from langgraph.types import interrupt
 
 async def generic_worker_node(state: dict, instruction: str, agent_type: str, config: RunnableConfig = None) -> dict:

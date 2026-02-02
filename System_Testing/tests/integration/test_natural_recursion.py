@@ -6,7 +6,7 @@ import json
 
 # Add backend directory to sys.path
 
-from agent import app_graph
+from app_graph import app_graph
 
 @pytest.mark.asyncio
 async def test_natural_recursion():

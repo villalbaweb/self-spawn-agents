@@ -212,8 +212,8 @@ class TestExecuteNode:
             "metadata": {"status": "completed", "confidence_score": 0.85}
         }
         
-        with patch("agents.subgraphs.worker_subgraph.should_decompose", new_callable=AsyncMock) as mock_decompose, \
-             patch("agents.subgraphs.worker_subgraph.generic_worker_node", new_callable=AsyncMock) as mock_worker:
+        with patch.object(worker_subgraph_module, "should_decompose", new_callable=AsyncMock) as mock_decompose, \
+             patch.object(worker_subgraph_module, "generic_worker_node", new_callable=AsyncMock) as mock_worker:
             
             mock_decompose.return_value = (False, {})
             mock_worker.return_value = mock_result
@@ -240,9 +240,11 @@ class TestExecuteNode:
             "metadata": {"status": "completed", "confidence_score": 0.85}
         }
         
-        with patch("agents.subgraphs.worker_subgraph.should_decompose", new_callable=AsyncMock) as mock_decompose, \
-             patch("agents.subgraphs.worker_subgraph.create_mini_plan", new_callable=AsyncMock) as mock_planner, \
-             patch("agents.subgraphs.worker_subgraph.generic_worker_node", new_callable=AsyncMock) as mock_worker:
+        # Patch MAX_RECURSION_DEPTH to ensure depth check passes (depth=1, need depth < MAX-1)
+        with patch.object(worker_subgraph_module, "MAX_RECURSION_DEPTH", 5), \
+             patch.object(worker_subgraph_module, "should_decompose", new_callable=AsyncMock) as mock_decompose, \
+             patch.object(worker_subgraph_module, "create_mini_plan", new_callable=AsyncMock) as mock_planner, \
+             patch.object(worker_subgraph_module, "generic_worker_node", new_callable=AsyncMock) as mock_worker:
             
             # Use side_effect to prevent infinite recursion
             # 1. Main task -> True (decompose)
@@ -317,9 +319,9 @@ class TestWorkerSubgraphIntegration:
         }
         mock_confidence = {"confidence_score": 0.88, "confidence_reasoning": "Thorough analysis."}
         
-        with patch("agents.subgraphs.worker_subgraph.should_decompose", new_callable=AsyncMock) as mock_decompose, \
-             patch("agents.subgraphs.worker_subgraph.generic_worker_node", new_callable=AsyncMock) as mock_worker, \
-             patch("agents.subgraphs.worker_subgraph.evaluate_confidence", new_callable=AsyncMock) as mock_eval:
+        with patch.object(worker_subgraph_module, "should_decompose", new_callable=AsyncMock) as mock_decompose, \
+             patch.object(worker_subgraph_module, "generic_worker_node", new_callable=AsyncMock) as mock_worker, \
+             patch.object(worker_subgraph_module, "evaluate_confidence", new_callable=AsyncMock) as mock_eval:
             
             mock_decompose.return_value = (False, {})
             mock_worker.return_value = mock_worker_result
@@ -347,9 +349,6 @@ class TestRecursiveSpawning:
     
     @pytest.mark.asyncio
     async def test_complex_mini_task_spawns_child_subgraph(self, complex_worker_state):
-        print(f"Module Type: {type(worker_subgraph_module)}")
-        print(f"Module Repr: {worker_subgraph_module}")
-        print(f"Execute Node Module: {execute_node.__module__}")
         """Complex child tasks in mini-plan should spawn recursive subgraphs."""
         # Create a mini-plan where one task is complex enough to recurse
         mock_plan = MiniPlan(
@@ -368,7 +367,6 @@ class TestRecursiveSpawning:
         # Track should_decompose calls to verify recursive check
         decompose_calls = []
         async def mock_decompose(task, config=None, root_task_id=None):
-            print(f"DEBUG MOCK: {task!r}")
             decompose_calls.append(task)
             # First call (main task) returns True to trigger mini-plan
             # Subsequent calls for child tasks
@@ -376,9 +374,11 @@ class TestRecursiveSpawning:
                 return True, {}  # Complex child task
             return False, {}
         
-        with patch.object(worker_subgraph_module, "should_decompose", side_effect=mock_decompose), \
-             patch("agents.subgraphs.worker_subgraph.create_mini_plan", new_callable=AsyncMock) as mock_planner, \
-             patch("agents.subgraphs.worker_subgraph.generic_worker_node", new_callable=AsyncMock) as mock_worker, \
+        # Patch MAX_RECURSION_DEPTH to ensure depth check passes (depth=1, need depth < MAX-1)
+        with patch.object(worker_subgraph_module, "MAX_RECURSION_DEPTH", 5), \
+             patch.object(worker_subgraph_module, "should_decompose", side_effect=mock_decompose), \
+             patch.object(worker_subgraph_module, "create_mini_plan", new_callable=AsyncMock) as mock_planner, \
+             patch.object(worker_subgraph_module, "generic_worker_node", new_callable=AsyncMock) as mock_worker, \
              patch.object(worker_subgraph_module, "_get_compiled_subgraph") as mock_get_subgraph:
             
             mock_planner.return_value = (mock_plan, {})
@@ -408,9 +408,9 @@ class TestRecursiveSpawning:
         """Ensure recursion stops at MAX_RECURSION_DEPTH."""
         complex_worker_state["depth"] = 2  # Near limit
         
-        with patch("agents.subgraphs.worker_subgraph.MAX_RECURSION_DEPTH", 3):
-            with patch("agents.subgraphs.worker_subgraph.should_decompose", new_callable=AsyncMock) as mock_decompose, \
-                 patch("agents.subgraphs.worker_subgraph.generic_worker_node", new_callable=AsyncMock) as mock_worker:
+        with patch.object(worker_subgraph_module, "MAX_RECURSION_DEPTH", 3):
+            with patch.object(worker_subgraph_module, "should_decompose", new_callable=AsyncMock) as mock_decompose, \
+                 patch.object(worker_subgraph_module, "generic_worker_node", new_callable=AsyncMock) as mock_worker:
                 
                 mock_decompose.return_value = (True, {})  # Would want to decompose
                 mock_worker.return_value = {"output": "Direct execution", "metadata": {}}

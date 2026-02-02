@@ -7,13 +7,13 @@ import asyncio
 
 
 # Import the actual graph
-from agent import app_graph
-from agents.workers.generic import generic_worker_node
+from app_graph import app_graph
+from agents.workers.generic_worker import generic_worker_node
 
 class TestFullChainDepth(unittest.IsolatedAsyncioTestCase):
     
     @pytest.mark.skip(reason="Legacy test: spawn_subgraph is no longer used in generic_worker (refactored to graph recursion)")
-    @patch("agents.dependencies.llm")
+    @patch("config.llm_providers.llm")
     @patch("agents.tools.subgraph.spawn_subgraph") # Mock the tool execution to capture args
     @pytest.mark.asyncio
     async def test_depth_propagation_in_full_chain(self, mock_spawn_subgraph, mock_llm):

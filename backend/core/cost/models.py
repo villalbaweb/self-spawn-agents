@@ -1,7 +1,7 @@
 """
 Data models for cost tracking.
 
-Provides both Pydantic models (for API/state) and SQLAlchemy models (for persistence).
+Provides both Pydantic models (for API/state) and dataclasses (for in-memory tracking).
 """
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
@@ -59,7 +59,6 @@ class CostRecord:
             if v is None or isinstance(v, (str, int, float, bool)):
                 safe_metadata[k] = v
             elif isinstance(v, (list, dict)):
-                # Convert nested structures to string to be safe
                 try:
                     import json
                     json.dumps(v)  # Test if serializable
@@ -141,71 +140,3 @@ class UsageStatsUpdate(BaseModel):
             "llm_calls": float(self.llm_calls),
             "tool_calls": float(self.tool_calls),
         }
-
-
-# --- SQLAlchemy Models (for Phase 2 persistence) ---
-# Conditionally import to avoid hard dependency
-
-try:
-    from sqlalchemy import Column, String, Float, DateTime, Integer, Text, Index
-    from sqlalchemy.orm import declarative_base
-    
-    Base = declarative_base()
-    
-    class CostRecordDB(Base):
-        """SQLAlchemy model for persistent cost storage."""
-        __tablename__ = "cost_records"
-        
-        id = Column(Integer, primary_key=True, autoincrement=True)
-        type = Column(String(20), nullable=False, index=True)
-        cost_usd = Column(Float, nullable=False)
-        timestamp = Column(DateTime, default=datetime.utcnow, index=True)
-        
-        # Attribution
-        task_id = Column(String(64), index=True)
-        agent_id = Column(String(64), index=True)
-        node_name = Column(String(128))
-        
-        # LLM fields
-        model = Column(String(64), index=True)
-        provider = Column(String(32))
-        input_tokens = Column(Integer, default=0)
-        output_tokens = Column(Integer, default=0)
-        cached_tokens = Column(Integer, default=0)
-        
-        # Tool fields
-        tool_name = Column(String(64))
-        
-        # Extensibility
-        metadata_json = Column(Text)  # JSON string
-        
-        # Composite indexes for common queries
-        __table_args__ = (
-            Index("ix_cost_task_timestamp", "task_id", "timestamp"),
-            Index("ix_cost_type_timestamp", "type", "timestamp"),
-        )
-        
-        @classmethod
-        def from_record(cls, record: CostRecord) -> "CostRecordDB":
-            """Create DB model from CostRecord dataclass."""
-            import json
-            return cls(
-                type=record.type.value,
-                cost_usd=record.cost_usd,
-                timestamp=record.timestamp,
-                task_id=record.task_id,
-                agent_id=record.agent_id,
-                node_name=record.node_name,
-                model=record.model,
-                provider=record.provider,
-                input_tokens=record.input_tokens,
-                output_tokens=record.output_tokens,
-                cached_tokens=record.cached_tokens,
-                tool_name=record.tool_name,
-                metadata_json=json.dumps(record.metadata) if record.metadata else None,
-            )
-
-except ImportError:
-    # SQLAlchemy not installed - DB models unavailable
-    Base = None
-    CostRecordDB = None

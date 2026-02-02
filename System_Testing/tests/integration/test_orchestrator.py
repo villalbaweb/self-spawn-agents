@@ -10,9 +10,9 @@ import json
 import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../backend')))
-from agent import app_graph
-from agents.state import AgentState
-from agents.supervisor_agent import GraphPlan, NodeSchema
+from app_graph import app_graph
+from core.state.orchestrator_state import AgentState
+from agents.supervisor import GraphPlan, NodeSchema
 
 @pytest.mark.asyncio
 @pytest.mark.asyncio
@@ -30,12 +30,8 @@ async def test_graph_direct():
 
     try:
         print("▶️ Invoking Graph...")
-        # Mock shared_memory to avoid "no active connection" error
-        # We need to patch where get_app_graph looks for it (agent.shared_memory.memory)
-        # But app_graph is already imported.
-        # Actually, get_app_graph imports internally: from agents.shared_memory import memory
-        # So we patch agents.shared_memory.memory
-        # Mock shared_memory to avoid "no active connection" error
+        # Mock checkpointer.memory to avoid "no active connection" error
+        # We patch agents.graph_compiler.checkpointer.memory
         # Use MemorySaver instead of MagicMock
         # Also RESET the cached local graph to force re-compilation with our mock memory
         # Create Mock Instances for return values
@@ -65,9 +61,9 @@ async def test_graph_direct():
             "usage_stats": {"cost": 0.01}
         }
 
-        with patch("agents.shared_memory.memory", MemorySaver()), \
+        with patch("core.persistence.checkpointer.memory", MemorySaver()), \
              patch("agents.semantic_splitter.llm") as mock_splitter_llm, \
-             patch("agents.supervisor_agent.llm") as mock_supervisor_llm, \
+             patch("agents.supervisor.llm") as mock_supervisor_llm, \
              patch("agents.synthesizer.llm") as mock_synthesizer_llm, \
              patch("agents.confidence_check.interrupt") as mock_interrupt, \
              patch("agents.graph_compiler.generic_worker_node", new_callable=AsyncMock) as mock_worker:
@@ -80,8 +76,8 @@ async def test_graph_direct():
             mock_worker.return_value = mock_worker_result
 
             # Reset cached graph to force recompile with patched MemorySaver checkpointer
-            import agent
-            agent._compiled_graph = None
+            import app_graph as app_graph_module
+            app_graph_module._compiled_graph = None
 
             final_state = await app_graph.ainvoke(initial_state, config={"configurable": {"thread_id": "test_thread"}})
         
