@@ -2,10 +2,10 @@ from typing import Dict, Any, Annotated, List
 from langgraph.graph import StateGraph, START, END
 from langchain_core.runnables import RunnableConfig
 from core.state.orchestrator_state import AgentState, replace, merge_lists
-from agents.workers.generic_worker import generic_worker_node
+from agents.task_executor import task_executor_node
 from schemas.blueprint import AppBlueprint, AgentInfo, EdgeInfo
 from core.persistence import checkpointer
-from agents.subgraphs import worker_subgraph
+from agents.recursive_executor import recursive_executor
 from core.state.worker_state import WorkerState
 from config.settings import MAX_RECURSION_DEPTH
 from langgraph.types import interrupt, Command
@@ -14,9 +14,9 @@ import uuid
 import os
 from datetime import datetime
 
-async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) -> Dict[str, Any]:
+async def graph_executor_node(state: AgentState, config: RunnableConfig = None) -> Dict[str, Any]:
     """
-    Compiles and executes a dynamic LangGraph based on the graph_plan.
+    Builds and executes a dynamic LangGraph based on the graph_plan.
     Extracts execution blueprint with system prompts for visualization.
     """
     plan = state.get("graph_plan", {})
@@ -130,9 +130,9 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 }
                 
                 try:
-                    final_sub_state = await worker_subgraph.ainvoke(sub_state, config=config)
+                    final_sub_state = await recursive_executor.ainvoke(sub_state, config=config)
                 except Exception as e:
-                    print(f"❌ [RecursiveNode] WorkerSubgraph failed: {e}")
+                    print(f"❌ [RecursiveNode] RecursiveExecutor failed: {e}")
                     return {
                         "results": {_id: f"[Subgraph error: {str(e)}]"},
                         "metadata": {_id: {"status": "error", "agent_role": "SubOrchestrator"}},
@@ -274,7 +274,7 @@ async def graph_compiler_node(state: AgentState, config: RunnableConfig = None) 
                 subject_block = f"<input_data type=\"subject\">{subject}</input_data>\n" if subject else ""
                 enriched_instruction = f"{subject_block}" + "\n".join(context_parts) + f"\n\n<task>{_instr}</task>"
                 
-                result = await generic_worker_node(s, enriched_instruction, _type, config)
+                result = await task_executor_node(s, enriched_instruction, _type, config)
                 
                 meta = result.get("metadata", {})
                 current_depth = s.get("depth", 0)

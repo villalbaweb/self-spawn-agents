@@ -12,7 +12,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../backend')))
 from app_graph import app_graph
 from core.state.orchestrator_state import AgentState
-from agents.supervisor import GraphPlan, NodeSchema
+from agents.execution_planner import GraphPlan, NodeSchema
 
 @pytest.mark.asyncio
 @pytest.mark.asyncio
@@ -31,7 +31,7 @@ async def test_graph_direct():
     try:
         print("▶️ Invoking Graph...")
         # Mock checkpointer.memory to avoid "no active connection" error
-        # We patch agents.graph_compiler.checkpointer.memory
+        # We patch agents.graph_executor.checkpointer.memory
         # Use MemorySaver instead of MagicMock
         # Also RESET the cached local graph to force re-compilation with our mock memory
         # Create Mock Instances for return values
@@ -62,11 +62,11 @@ async def test_graph_direct():
         }
 
         with patch("core.persistence.checkpointer.memory", MemorySaver()), \
-             patch("agents.semantic_splitter.llm") as mock_splitter_llm, \
-             patch("agents.supervisor.llm") as mock_supervisor_llm, \
+             patch("agents.task_decomposer.llm") as mock_splitter_llm, \
+             patch("agents.execution_planner.llm") as mock_supervisor_llm, \
              patch("agents.synthesizer.llm") as mock_synthesizer_llm, \
              patch("agents.confidence_check.interrupt") as mock_interrupt, \
-             patch("agents.graph_compiler.generic_worker_node", new_callable=AsyncMock) as mock_worker:
+             patch("agents.graph_executor.task_executor_node", new_callable=AsyncMock) as mock_worker:
             
             # Setup mocks
             mock_splitter_llm.with_structured_output.return_value = mock_splitter_llm_instance

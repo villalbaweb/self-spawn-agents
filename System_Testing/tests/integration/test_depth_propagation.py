@@ -6,17 +6,17 @@ import os
 
 
 import sys
-from agents.graph_compiler import graph_compiler_node
-graph_compiler_module = sys.modules["agents.graph_compiler"]
+from agents.graph_executor import graph_executor_node
+graph_executor_module = sys.modules["agents.graph_executor"]
 
 class TestDepthPropagation(unittest.IsolatedAsyncioTestCase):
     
-    @patch("agents.graph_compiler.interrupt")
-    @patch.object(graph_compiler_module, "StateGraph")
+    @patch("agents.graph_executor.interrupt")
+    @patch.object(graph_executor_module, "StateGraph")
     @pytest.mark.asyncio
     async def test_depth_passed_to_dynamic_graph(self, mock_state_graph_cls, mock_interrupt):
-        """Verify that graph_compiler_node initializes dynamic graph with depth from parent state."""
-        print("\n🧪 Testing Depth Propagation in Graph Compiler...")
+        """Verify that graph_executor_node initializes dynamic graph with depth from parent state."""
+        print("\\n\ud83e\uddea Testing Depth Propagation in Graph Executor...")
         
         # Setup Mocks
         mock_workflow = MagicMock()
@@ -42,8 +42,8 @@ class TestDepthPropagation(unittest.IsolatedAsyncioTestCase):
             "depth": 5 # Arbitrary non-zero depth
         }
         
-        # Run compiler node
-        await graph_compiler_node(parent_state)
+        # Run executor node
+        await graph_executor_node(parent_state)
         
         # Verify app.ainvoke was called with initial state containing depth=5
         mock_app.ainvoke.assert_called_once()

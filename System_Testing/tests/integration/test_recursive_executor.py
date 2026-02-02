@@ -1,5 +1,5 @@
 """
-Tests for the Native Worker Subgraph (Epic 4.1).
+Tests for the Recursive Executor (Epic 4.1).
 
 Verifies the lightweight mini-orchestration flow:
 - Simple tasks: Direct execute → validate (2-3 LLM calls)
@@ -10,10 +10,11 @@ import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
 import sys
-from agents.subgraphs import worker_subgraph, build_worker_subgraph, WorkerState
+from agents.recursive_executor import recursive_executor, build_recursive_executor
+from core.state.worker_state import WorkerState
 # Access the module explicitly to avoid shadowing by the CompiledStateGraph object
-worker_subgraph_module = sys.modules["agents.subgraphs.worker_subgraph"]
-from agents.subgraphs.worker_subgraph import (
+recursive_executor_module = sys.modules["agents.recursive_executor"]
+from agents.recursive_executor import (
     execute_node,
     validate_node,
     should_decompose,
@@ -81,7 +82,7 @@ class TestShouldDecompose:
             reasoning="Task involves multiple auth components."
         )
         
-        with patch("agents.subgraphs.worker_subgraph.llm_mini") as mock_llm:
+        with patch("agents.recursive_executor.llm_mini") as mock_llm:
             structured_mock = MagicMock()
             structured_mock.ainvoke = AsyncMock(return_value=mock_classification)
             mock_llm.with_structured_output.return_value = structured_mock
@@ -99,7 +100,7 @@ class TestShouldDecompose:
             reasoning="Single research query."
         )
         
-        with patch("agents.subgraphs.worker_subgraph.llm_mini") as mock_llm:
+        with patch("agents.recursive_executor.llm_mini") as mock_llm:
             structured_mock = MagicMock()
             structured_mock.ainvoke = AsyncMock(return_value=mock_classification)
             mock_llm.with_structured_output.return_value = structured_mock
@@ -110,7 +111,7 @@ class TestShouldDecompose:
     @pytest.mark.asyncio
     async def test_fallback_on_llm_error(self):
         """Should fall back to SINGLE (False) if the LLM fails."""
-        with patch("agents.subgraphs.worker_subgraph.llm_mini") as mock_llm:
+        with patch("agents.recursive_executor.llm_mini") as mock_llm:
             mock_llm.with_structured_output.side_effect = Exception("LLM Error")
             
             result, _ = await should_decompose("Some long task that exceeds the length check limit")
@@ -131,7 +132,7 @@ class TestMiniPlanner:
             reasoning="Split into research and implementation"
         )
         
-        with patch("agents.subgraphs.worker_subgraph.llm_mini") as mock_llm:
+        with patch("agents.recursive_executor.llm_mini") as mock_llm:
             structured_mock = MagicMock()
             structured_mock.ainvoke = AsyncMock(return_value=mock_plan)
             mock_llm.with_structured_output.return_value = structured_mock
@@ -144,7 +145,7 @@ class TestMiniPlanner:
     @pytest.mark.asyncio
     async def test_create_mini_plan_fallback_on_error(self):
         """create_mini_plan should return fallback plan on error."""
-        with patch("agents.subgraphs.worker_subgraph.llm_mini") as mock_llm:
+        with patch("agents.recursive_executor.llm_mini") as mock_llm:
             mock_llm.with_structured_output.side_effect = Exception("API Error")
             
             result, _ = await create_mini_plan("Some task", "Subject")
@@ -157,15 +158,15 @@ class TestWorkerSubgraphStructure:
     """Tests for subgraph structure and compilation."""
     
     def test_build_worker_subgraph_returns_stategraph(self):
-        """Verify build_worker_subgraph returns a valid StateGraph."""
+        """Verify build_recursive_executor returns a valid StateGraph."""
         from langgraph.graph import StateGraph
-        graph = build_worker_subgraph()
+        graph = build_recursive_executor()
         assert isinstance(graph, StateGraph)
     
     def test_worker_subgraph_is_compiled(self):
-        """Verify the pre-compiled worker_subgraph is usable."""
-        assert worker_subgraph is not None
-        assert hasattr(worker_subgraph, "ainvoke")
+        """Verify the pre-compiled recursive_executor is usable."""
+        assert recursive_executor is not None
+        assert hasattr(recursive_executor, "ainvoke")
 
 
 class TestExecuteNode:
@@ -185,7 +186,7 @@ class TestExecuteNode:
     @pytest.mark.asyncio
     async def test_execute_respects_depth_limit(self, simple_worker_state):
         """Execute should stop at MAX_RECURSION_DEPTH."""
-        with patch("agents.subgraphs.worker_subgraph.MAX_RECURSION_DEPTH", 2):
+        with patch("agents.recursive_executor.MAX_RECURSION_DEPTH", 2):
             simple_worker_state["depth"] = 2  # At limit
             
             result = await execute_node(simple_worker_state)
@@ -206,14 +207,14 @@ class TestExecuteNode:
     
     @pytest.mark.asyncio
     async def test_simple_task_uses_direct_execution(self, simple_worker_state):
-        """Simple tasks should use direct generic_worker_node execution."""
+        """Simple tasks should use direct task_executor_node execution."""
         mock_result = {
             "output": "AI is transforming healthcare through diagnostics.",
             "metadata": {"status": "completed", "confidence_score": 0.85}
         }
         
-        with patch.object(worker_subgraph_module, "should_decompose", new_callable=AsyncMock) as mock_decompose, \
-             patch.object(worker_subgraph_module, "generic_worker_node", new_callable=AsyncMock) as mock_worker:
+        with patch.object(recursive_executor_module, "should_decompose", new_callable=AsyncMock) as mock_decompose, \
+             patch.object(recursive_executor_module, "task_executor_node", new_callable=AsyncMock) as mock_worker:
             
             mock_decompose.return_value = (False, {})
             mock_worker.return_value = mock_result
@@ -241,10 +242,10 @@ class TestExecuteNode:
         }
         
         # Patch MAX_RECURSION_DEPTH to ensure depth check passes (depth=1, need depth < MAX-1)
-        with patch.object(worker_subgraph_module, "MAX_RECURSION_DEPTH", 5), \
-             patch.object(worker_subgraph_module, "should_decompose", new_callable=AsyncMock) as mock_decompose, \
-             patch.object(worker_subgraph_module, "create_mini_plan", new_callable=AsyncMock) as mock_planner, \
-             patch.object(worker_subgraph_module, "generic_worker_node", new_callable=AsyncMock) as mock_worker:
+        with patch.object(recursive_executor_module, "MAX_RECURSION_DEPTH", 5), \
+             patch.object(recursive_executor_module, "should_decompose", new_callable=AsyncMock) as mock_decompose, \
+             patch.object(recursive_executor_module, "create_mini_plan", new_callable=AsyncMock) as mock_planner, \
+             patch.object(recursive_executor_module, "task_executor_node", new_callable=AsyncMock) as mock_worker:
             
             # Use side_effect to prevent infinite recursion
             # 1. Main task -> True (decompose)
@@ -284,7 +285,7 @@ class TestValidateNode:
         
         mock_eval = {"confidence_score": 0.9, "confidence_reasoning": "Complete and accurate answer."}
         
-        with patch("agents.subgraphs.worker_subgraph.evaluate_confidence", new_callable=AsyncMock) as mock_confidence:
+        with patch("agents.recursive_executor.evaluate_confidence", new_callable=AsyncMock) as mock_confidence:
             mock_confidence.return_value = (mock_eval, {})
             
             result = await validate_node(simple_worker_state)
@@ -298,7 +299,7 @@ class TestValidateNode:
         """Validate should return default score if evaluation fails."""
         simple_worker_state["results"] = {"test_worker_1": "Some valid output."}
         
-        with patch("agents.subgraphs.worker_subgraph.evaluate_confidence", new_callable=AsyncMock) as mock_confidence:
+        with patch("agents.recursive_executor.evaluate_confidence", new_callable=AsyncMock) as mock_confidence:
             mock_confidence.side_effect = Exception("API Error")
             
             result = await validate_node(simple_worker_state)
@@ -319,15 +320,15 @@ class TestWorkerSubgraphIntegration:
         }
         mock_confidence = {"confidence_score": 0.88, "confidence_reasoning": "Thorough analysis."}
         
-        with patch.object(worker_subgraph_module, "should_decompose", new_callable=AsyncMock) as mock_decompose, \
-             patch.object(worker_subgraph_module, "generic_worker_node", new_callable=AsyncMock) as mock_worker, \
-             patch.object(worker_subgraph_module, "evaluate_confidence", new_callable=AsyncMock) as mock_eval:
+        with patch.object(recursive_executor_module, "should_decompose", new_callable=AsyncMock) as mock_decompose, \
+             patch.object(recursive_executor_module, "task_executor_node", new_callable=AsyncMock) as mock_worker, \
+             patch.object(recursive_executor_module, "evaluate_confidence", new_callable=AsyncMock) as mock_eval:
             
             mock_decompose.return_value = (False, {})
             mock_worker.return_value = mock_worker_result
             mock_eval.return_value = (mock_confidence, {})
             
-            result = await worker_subgraph.ainvoke(simple_worker_state)
+            result = await recursive_executor.ainvoke(simple_worker_state)
             
             assert "test_worker_1" in result["results"]
             assert result["confidence_score"] == 0.88
@@ -338,7 +339,7 @@ class TestWorkerSubgraphIntegration:
         """Test that budget exceeded triggers INTERRUPT propagation."""
         simple_worker_state["usage_stats"] = {"cost": 3.0}  # Over limit
         
-        result = await worker_subgraph.ainvoke(simple_worker_state)
+        result = await recursive_executor.ainvoke(simple_worker_state)
         
         assert result["global_signal"] == "INTERRUPT"
         assert result["all_agents"][0]["status"] == "budget_exceeded"
@@ -375,11 +376,11 @@ class TestRecursiveSpawning:
             return False, {}
         
         # Patch MAX_RECURSION_DEPTH to ensure depth check passes (depth=1, need depth < MAX-1)
-        with patch.object(worker_subgraph_module, "MAX_RECURSION_DEPTH", 5), \
-             patch.object(worker_subgraph_module, "should_decompose", side_effect=mock_decompose), \
-             patch.object(worker_subgraph_module, "create_mini_plan", new_callable=AsyncMock) as mock_planner, \
-             patch.object(worker_subgraph_module, "generic_worker_node", new_callable=AsyncMock) as mock_worker, \
-             patch.object(worker_subgraph_module, "_get_compiled_subgraph") as mock_get_subgraph:
+        with patch.object(recursive_executor_module, "MAX_RECURSION_DEPTH", 5), \
+             patch.object(recursive_executor_module, "should_decompose", side_effect=mock_decompose), \
+             patch.object(recursive_executor_module, "create_mini_plan", new_callable=AsyncMock) as mock_planner, \
+             patch.object(recursive_executor_module, "task_executor_node", new_callable=AsyncMock) as mock_worker, \
+             patch.object(recursive_executor_module, "_get_compiled_subgraph") as mock_get_subgraph:
             
             mock_planner.return_value = (mock_plan, {})
             mock_worker.return_value = mock_worker_result
@@ -408,9 +409,9 @@ class TestRecursiveSpawning:
         """Ensure recursion stops at MAX_RECURSION_DEPTH."""
         complex_worker_state["depth"] = 2  # Near limit
         
-        with patch.object(worker_subgraph_module, "MAX_RECURSION_DEPTH", 3):
-            with patch.object(worker_subgraph_module, "should_decompose", new_callable=AsyncMock) as mock_decompose, \
-                 patch.object(worker_subgraph_module, "generic_worker_node", new_callable=AsyncMock) as mock_worker:
+        with patch.object(recursive_executor_module, "MAX_RECURSION_DEPTH", 3):
+            with patch.object(recursive_executor_module, "should_decompose", new_callable=AsyncMock) as mock_decompose, \
+                 patch.object(recursive_executor_module, "task_executor_node", new_callable=AsyncMock) as mock_worker:
                 
                 mock_decompose.return_value = (True, {})  # Would want to decompose
                 mock_worker.return_value = {"output": "Direct execution", "metadata": {}}

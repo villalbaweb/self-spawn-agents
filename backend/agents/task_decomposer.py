@@ -14,7 +14,7 @@ class SubtaskList(BaseModel):
     deliverables: List[str] = Field(default_factory=list, description="Explicit outputs requested (e.g., 'Marketing Roadmap', 'Executive Summary PDF', 'Python script')")
     reasoning: str = Field(..., description="Brief explanation of the decomposition strategy.")
 
-async def semantic_splitter_node(state: AgentState, config: RunnableConfig = None) -> Dict[str, Any]:
+async def task_decomposer_node(state: AgentState, config: RunnableConfig = None) -> Dict[str, Any]:
     """
     Decompose a high-level task into atomic subtasks using LLM semantics.
     Also extracts the primary subject and required deliverables.
@@ -24,7 +24,7 @@ async def semantic_splitter_node(state: AgentState, config: RunnableConfig = Non
     
     # Cost tracking setup
     task_id = config.get("configurable", {}).get("thread_id") if config else None
-    cost_callback = CostTrackingCallback(task_id=task_id, node_name="semantic_splitter")
+    cost_callback = CostTrackingCallback(task_id=task_id, node_name="task_decomposer")
     llm_config: RunnableConfig = {"callbacks": [cost_callback]}
     
     # Improved prompt with subject and deliverables extraction + search optimization

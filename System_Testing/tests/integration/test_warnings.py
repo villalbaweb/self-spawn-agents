@@ -7,12 +7,12 @@ from unittest.mock import patch, AsyncMock, MagicMock
 
 
 class TestBudgetWarning:
-    """Tests for budget warning in graph_compiler."""
+    """Tests for budget warning in graph_executor."""
 
     @pytest.mark.asyncio
     async def test_budget_warning_triggered_at_80_percent(self):
         """When cost exceeds 80% of budget, a warning should be attached to agent_data."""
-        from agents.graph_compiler import graph_compiler_node
+        from agents.graph_executor import graph_executor_node
         
         # Create a state with budget config
         state = {
@@ -31,8 +31,8 @@ class TestBudgetWarning:
             "all_edges": []
         }
         
-        # Mock the generic_worker_node to return a simple result
-        with patch("agents.graph_compiler.generic_worker_node", new_callable=AsyncMock) as mock_worker:
+        # Mock the task_executor_node to return a simple result
+        with patch("agents.graph_executor.task_executor_node", new_callable=AsyncMock) as mock_worker:
             mock_worker.return_value = {
                 "output": "Test output",
                 "metadata": {
@@ -44,7 +44,7 @@ class TestBudgetWarning:
             }
             
             # Mock checkpointer.memory
-            with patch("agents.graph_compiler.checkpointer") as mock_memory:
+            with patch("agents.graph_executor.checkpointer") as mock_memory:
                 mock_memory.memory = MagicMock()
                 
                 # We need to mock the entire inner graph execution
@@ -57,15 +57,15 @@ class TestBudgetWarning:
 
 
 class TestConfidenceWarning:
-    """Tests for low confidence warning in generic worker."""
+    """Tests for low confidence warning in task executor."""
 
     @pytest.mark.asyncio
     async def test_low_confidence_warning_triggered(self):
         """When confidence is below TIER2_THRESHOLD, warning should be in metadata."""
-        from agents.workers.generic_worker import generic_worker_node
+        from agents.task_executor import task_executor_node
         
         # Mock interrupt to avoid RuntimeError if Tier 3 is triggered
-        with patch("agents.workers.generic_worker.interrupt") as mock_interrupt:
+        with patch("agents.task_executor.interrupt") as mock_interrupt:
              mock_interrupt.return_value = {"output": "Manual fix"} # Simulate resume
 
         
@@ -74,7 +74,7 @@ class TestConfidenceWarning:
         agent_type = "Analyst"
         
         # Mock LLM to return a simple response
-        with patch("agents.workers.generic_worker.llm") as mock_llm:
+        with patch("agents.task_executor.llm") as mock_llm:
             mock_llm.bind_tools.return_value = mock_llm
             mock_response = MagicMock()
             mock_response.content = "Some uncertain analysis"
@@ -82,17 +82,17 @@ class TestConfidenceWarning:
             mock_llm.ainvoke = AsyncMock(return_value=mock_response)
             
             # Mock llm_mini for system prompt generation
-            with patch("agents.workers.generic_worker.llm_mini") as mock_mini:
+            with patch("agents.task_executor.llm_mini") as mock_mini:
                 mock_mini.ainvoke = AsyncMock(return_value=MagicMock(content="<role>Analyst</role>"))
                 
                 # Mock evaluate_confidence to return low score
-                with patch("agents.workers.generic_worker.evaluate_confidence", new_callable=AsyncMock) as mock_eval:
+                with patch("agents.task_executor.evaluate_confidence", new_callable=AsyncMock) as mock_eval:
                     mock_eval.return_value = ({
                         "confidence_score": 0.4,  # Below TIER2_THRESHOLD (0.5)
                         "confidence_reasoning": "Output lacks specificity"
                     }, {})
                     
-                    result = await generic_worker_node(state, instruction, agent_type)
+                    result = await task_executor_node(state, instruction, agent_type)
                     
                     # Print result for debugging if assertion fails
                     if "metadata" not in result or "low_confidence_flag" not in result["metadata"]:

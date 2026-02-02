@@ -8,17 +8,17 @@ import json
 
 # Add backend directory to sys.path
 
-from agents.graph_compiler import graph_compiler_node
+from agents.graph_executor import graph_executor_node
 
 @pytest.mark.asyncio
 async def test_forced_subgraph():
     """
     This test FORCES a subgraph spawn by:
     1. Manually constructing a graph_plan with a "Sub-Orchestrator" agent type
-    2. Setting recursive: true to trigger the native WorkerSubgraph
+    2. Setting recursive: true to trigger the native recursive_executor
     
     Epic 4.1 Update: Recursion is now handled via native LangGraph subgraphs,
-    not the legacy spawn_subgraph tool. Recursive nodes use worker_subgraph
+    not the legacy spawn_subgraph tool. Recursive nodes use recursive_executor
     which implements lightweight mini-orchestration.
     """
     print("🚀 Testing FORCED Recursive Subgraph (Native LangGraph)...")
@@ -56,7 +56,7 @@ Provide implementation details for each component.""",
         print("▶️ Executing graph with Orchestrator node...")
         # Mock shared_memory to avoid "no active connection" error
         # Use MemorySaver instead of MagicMock
-        # Also mock generic_worker_node to avoid LLM calls
+        # Also mock task_executor_node to avoid LLM calls
         mock_worker_result = {
             "output": "Mocked Worker Output",
             "metadata": {
@@ -65,10 +65,10 @@ Provide implementation details for each component.""",
                 "confidence_score": 0.9
             }
         }
-        with patch("agents.graph_compiler.checkpointer.memory", MemorySaver()), \
-             patch("agents.subgraphs.worker_subgraph.generic_worker_node", new_callable=AsyncMock) as mock_worker:
+        with patch("agents.graph_executor.checkpointer.memory", MemorySaver()), \
+             patch("agents.recursive_executor.task_executor_node", new_callable=AsyncMock) as mock_worker:
             mock_worker.return_value = mock_worker_result
-            result = await graph_compiler_node(state, config={"configurable": {"thread_id": "test_thread"}})
+            result = await graph_executor_node(state, config={"configurable": {"thread_id": "test_thread"}})
         
         results = result.get("results", {})
         

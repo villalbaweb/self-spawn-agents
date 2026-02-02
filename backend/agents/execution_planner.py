@@ -19,16 +19,16 @@ class GraphPlan(BaseModel):
     nodes: List[NodeSchema] = Field(..., description="List of nodes in the execution graph.")
     explanation: str = Field(..., description="Brief reasoning for this graph structure.")
 
-# --- 2. Supervisor Node Logic ---
+# --- 2. Execution Planner Node Logic ---
 
-async def supervisor_node(state: AgentState, config: RunnableConfig = None) -> Dict[str, Any]:
+async def execution_planner_node(state: AgentState, config: RunnableConfig = None) -> Dict[str, Any]:
     """
-    Takes atomic subtasks and generates a structured LangGraph plan.
+    Takes atomic subtasks and generates a structured LangGraph execution plan.
     """
     subtasks = state.get("subtasks", [])
     task = state.get("task", "")
     
-    print(f"👷 Supervisor Planning for {len(subtasks)} subtasks...")
+    print(f"📋 Planning execution for {len(subtasks)} subtasks...")
 
     if not subtasks:
         print("⚠️ No subtasks found to plan.")
@@ -36,7 +36,7 @@ async def supervisor_node(state: AgentState, config: RunnableConfig = None) -> D
     
     # Cost tracking setup
     task_id = config.get("configurable", {}).get("thread_id") if config else None
-    cost_callback = CostTrackingCallback(task_id=task_id, node_name="supervisor")
+    cost_callback = CostTrackingCallback(task_id=task_id, node_name="execution_planner")
     llm_config: RunnableConfig = {"callbacks": [cost_callback]}
 
     sys_prompt = """<role>System Architect & Orchestrator</role>

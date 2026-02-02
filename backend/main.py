@@ -6,7 +6,7 @@ from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 from app_graph import app_graph
 import json
-from agents.semantic_splitter import semantic_splitter_node
+from agents.task_decomposer import task_decomposer_node
 from core.persistence.checkpointer import init_checkpointer, close_checkpointer
 from core.cost import CostTracker, CostTrackingCallback, BudgetExceededError
 
@@ -49,11 +49,11 @@ class DecomposeRequest(BaseModel):
 @app.post("/api/decompose")
 async def decompose_handler(request: DecomposeRequest):
     """
-    Decompose a high-level task into subtasks using Module 1 (Semantic Splitter).
+    Decompose a high-level task into subtasks using the Task Decomposer.
     """
     print(f"Received decompose request for: {request.task}")
     # Construct minimal state for the node
-    result = await semantic_splitter_node({"task": request.task, "subtasks": []})
+    result = await task_decomposer_node({"task": request.task, "subtasks": []})
     return {"status": "success", "subtasks": result.get("subtasks", [])}
 
 import asyncio

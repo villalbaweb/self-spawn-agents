@@ -8,7 +8,7 @@ import asyncio
 
 # Import the actual graph
 from app_graph import app_graph
-from agents.workers.generic_worker import generic_worker_node
+from agents.task_executor import task_executor_node
 
 class TestFullChainDepth(unittest.IsolatedAsyncioTestCase):
     

@@ -29,7 +29,7 @@ from langchain_core.messages import SystemMessage, HumanMessage
 from pydantic import BaseModel, Field
 
 from core.state.worker_state import WorkerState
-from agents.workers.generic_worker import generic_worker_node
+from agents.task_executor import task_executor_node
 from agents.confidence_evaluator import evaluate_confidence
 from config.settings import MAX_RECURSION_DEPTH
 from config.llm_providers import llm_mini
@@ -258,7 +258,7 @@ async def execute_mini_plan(
                     "root_task_id": root_task_id
                 }
                 
-                result = await generic_worker_node(
+                result = await task_executor_node(
                     worker_state, 
                     enriched_instruction, 
                     mini_task.agent_type, 
@@ -568,7 +568,7 @@ async def execute_node(state: WorkerState, config: RunnableConfig = None) -> Dic
         }
         
         try:
-            result = await generic_worker_node(worker_state, enriched_task, "Researcher", config)
+            result = await task_executor_node(worker_state, enriched_task, "Researcher", config)
             output = result.get("output", str(result))
             meta = result.get("metadata", {})
             execution_time = time.time() - start_time
@@ -648,11 +648,11 @@ async def validate_node(state: WorkerState, config: RunnableConfig = None) -> Di
         return {"confidence_score": 0.5, "confidence_reasoning": f"Validation failed: {e}"}
 
 
-# --- BUILD THE SUBGRAPH ---
+# --- BUILD THE RECURSIVE EXECUTOR ---
 
-def build_worker_subgraph() -> StateGraph:
+def build_recursive_executor() -> StateGraph:
     """
-    Build the Worker Subgraph.
+    Build the Recursive Executor graph.
     
     Flow: START → execute → validate → END
     
@@ -661,7 +661,7 @@ def build_worker_subgraph() -> StateGraph:
     
     RECURSIVE SPAWNING:
     When execute_node creates a mini-plan, each child task can itself
-    spawn a new worker_subgraph if it's complex enough. This is enabled
+    spawn a new recursive_executor if it's complex enough. This is enabled
     by passing `_get_compiled_subgraph()` to `execute_mini_plan()`.
     """
     graph = StateGraph(WorkerState)
@@ -676,8 +676,8 @@ def build_worker_subgraph() -> StateGraph:
     return graph
 
 
-# Pre-compiled subgraph for reuse
-worker_subgraph = build_worker_subgraph().compile()
+# Pre-compiled recursive executor for reuse
+recursive_executor = build_recursive_executor().compile()
 
 # Register the compiled subgraph for recursive spawning
-_compiled_subgraph = worker_subgraph
+_compiled_subgraph = recursive_executor

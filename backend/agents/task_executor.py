@@ -92,10 +92,9 @@ from agents.tools.python_repl import python_repl
 from agents.self_correction import simple_self_correct
 from langgraph.types import interrupt
 
-async def generic_worker_node(state: dict, instruction: str, agent_type: str, config: RunnableConfig = None) -> dict:
+async def task_executor_node(state: dict, instruction: str, agent_type: str, config: RunnableConfig = None) -> dict:
     """
-    A generic worker that uses the LLM to perform a task.
-    Supports tool calling for recursive subgraphs.
+    Execute a single task using LLM with optional tool calling.
     Includes 3-Tier Escalation Protocol:
     - Tier 1: Autonomous Self-Correction (Retry).
     - Tier 2: Soft Flag (Metadata).

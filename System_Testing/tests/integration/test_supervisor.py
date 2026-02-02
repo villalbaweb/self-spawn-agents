@@ -6,12 +6,12 @@ import json
 
 # Add backend directory to sys.path
 
-from agents.supervisor import supervisor_node
+from agents.execution_planner import execution_planner_node
 
 @pytest.mark.asyncio
 @pytest.mark.asyncio
 async def test_supervisor():
-    print("🚀 Testing Supervisor Node...")
+    print("🚀 Testing Execution Planner Node...")
     
     # Mock input state
     subtasks = [
@@ -26,10 +26,10 @@ async def test_supervisor():
     }
 
     try:
-        result = await supervisor_node(state)
+        result = await execution_planner_node(state)
         graph_plan = result.get("graph_plan", {})
         
-        print("\n✅ Supervisor Output:")
+        print("\\n✅ Execution Planner Output:")
         print(json.dumps(graph_plan, indent=2))
         
         if not graph_plan.get("nodes"):
