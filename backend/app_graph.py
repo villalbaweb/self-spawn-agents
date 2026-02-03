@@ -32,10 +32,11 @@ def get_app_graph():
     """Get the compiled graph. Must be called after init_checkpointer()."""
     global _compiled_graph
     if _compiled_graph is None:
-        from core.persistence.checkpointer import memory
-        if memory is None:
+        from core.persistence.checkpointer import get_checkpointer
+        checkpointer = get_checkpointer()
+        if checkpointer is None:
             raise RuntimeError("Checkpointer not initialized. Call init_checkpointer() first.")
-        _compiled_graph = workflow.compile(checkpointer=memory)
+        _compiled_graph = workflow.compile(checkpointer=checkpointer)
     return _compiled_graph
 
 # For backwards compatibility, create a proxy that lazily gets the graph

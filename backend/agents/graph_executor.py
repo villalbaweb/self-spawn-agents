@@ -389,7 +389,7 @@ async def graph_executor_node(state: AgentState, config: RunnableConfig = None) 
         print(f"⚠️ Failed to save blueprint: {e}")
             
     # Compile with SHARED memory (accessed at runtime after initialization)
-    app = workflow.compile(checkpointer=checkpointer.memory)
+    app = workflow.compile(checkpointer=checkpointer.get_checkpointer())
     
     # --- 2. MANAGE INNER STATE ---
     # Retrieve or Create Persistent Thread ID

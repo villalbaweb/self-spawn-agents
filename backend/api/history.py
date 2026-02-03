@@ -1,252 +1,274 @@
+"""
+History and checkpoint management for LangGraph runs.
+
+Provides functions for listing runs, forking runs, and finding checkpoints
+using PostgreSQL-based persistence.
+"""
 import asyncio
 import uuid
 import json
-import aiosqlite
 from typing import List, Dict, Optional, Any, Tuple
+from datetime import datetime
+import psycopg
 from core.persistence import checkpointer
-from core.persistence.checkpointer import CHECKPOINT_DB_PATH
+from core.persistence.checkpointer import DATABASE_URL
+
 
 async def list_runs() -> List[Dict[str, Any]]:
     """
-    List all available runs (threads) from the checkpoints database.
-    Returns specific metadata if available in the latest checkpoint.
+    List all available runs (threads) from the PostgreSQL checkpoints database.
+    Returns metadata for each run including thread_id and last activity.
     """
-    if not CHECKPOINT_DB_PATH:
+    if not DATABASE_URL:
         return []
-
+    
     runs = []
     try:
-        async with aiosqlite.connect(CHECKPOINT_DB_PATH) as db:
-            try:
-                # Get all unique thread_ids and their latest checkpoint_id
+        async with await psycopg.AsyncConnection.connect(DATABASE_URL) as conn:
+            async with conn.cursor() as cur:
+                # Get all unique thread_ids and their latest checkpoint
                 query = """
-                SELECT thread_id, MAX(checkpoint_id) as last_active 
-                FROM checkpoints 
-                GROUP BY thread_id 
-                ORDER BY last_active DESC
+                SELECT 
+                    thread_id,
+                    MAX(checkpoint_id) as last_checkpoint,
+                    MAX(parent_checkpoint_id) as parent_id
+                FROM checkpoints
+                GROUP BY thread_id
+                ORDER BY MAX(checkpoint_id) DESC
                 """
-                async with db.execute(query) as cursor:
-                    async for row in cursor:
-                        run_id = row[0]
-                        last_active = row[1]
-                        
-                        run_info = {
-                            "run_id": run_id,
-                            "last_active": last_active,
-                            "task": "Unknown Task",
-                            "status": "unknown"
-                        }
-                        
-                        # Enrich with task name from memory state
-                        if checkpointer.memory:
-                            try:
-                                config = {"configurable": {"thread_id": run_id}}
-                                # aget_tuple returns (checkpoint, metadata, parent_config)
-                                # We need the channel values from the checkpoint
-                                state_tuple = await checkpointer.memory.aget_tuple(config)
-                                if state_tuple and state_tuple.checkpoint:
-                                    vals = state_tuple.checkpoint.get("channel_values", {})
-                                    run_info["task"] = vals.get("task", "Untitled Task")
-                                    # Try to infer status
-                                    if vals.get("synthesis"):
-                                        run_info["status"] = "completed"
-                                    elif vals.get("error"):
-                                        run_info["status"] = "failed"
-                                    else:
-                                        run_info["status"] = "active"
-                            except Exception as inner_e:
-                                print(f"Error fetching state for {run_id}: {inner_e}")
-                                
-                        runs.append(run_info)
-                        
-            except Exception as e:
-                print(f"Error querying checkpoints table: {e}")
-                pass
+                await cur.execute(query)
+                rows = await cur.fetchall()
+                
+                for row in rows:
+                    thread_id = row[0]
+                    last_checkpoint = row[1]
+                    
+                    runs.append({
+                        "run_id": thread_id,
+                        "last_checkpoint": last_checkpoint,
+                        "last_active": datetime.now().isoformat()  # PostgreSQL doesn't store timestamp in same way
+                    })
+                    
     except Exception as e:
-        print(f"Error connecting to history DB: {e}")
+        print(f"Error listing runs: {e}")
+        return []
     
     return runs
 
-async def get_run_details(run_id: str) -> Optional[Dict[str, Any]]:
-    """Get details for a specific run including its graph state snapshot."""
-    if not checkpointer.memory:
-        return None
+
+async def fork_run(source_thread_id: str, checkpoint_id: Optional[str] = None) -> str:
+    """
+    Fork a run by creating a new thread with the state from a specific checkpoint.
+    
+    Args:
+        source_thread_id: The thread ID to fork from
+        checkpoint_id: Optional specific checkpoint ID to fork from (uses latest if not provided)
         
-    config = {"configurable": {"thread_id": run_id}}
-    # Retrieve the latest state
+    Returns:
+        New thread ID
+    """
+    from app_graph import app_graph
+    
+    new_thread_id = str(uuid.uuid4())
+    source_config = {"configurable": {"thread_id": source_thread_id}}
+    new_config = {"configurable": {"thread_id": new_thread_id}}
+    
     try:
-        # We need to access the internal storage to get the checkpoint
-        # But langgraph's memory.aget returns a Checkpoint tuple, not the high level state directly usually
-        # To get high level state we usually use graph.aget_state, but we don't have the graph here easily?
-        # Actually we can use memory.aget(config)
+        # Get state from source thread at specific checkpoint or latest
+        if checkpoint_id:
+            source_config["configurable"]["checkpoint_id"] = checkpoint_id
         
-        checkpoint = await checkpointer.memory.aget(config)
-        if not checkpoint:
-            return None
+        source_state = await app_graph.aget_state(source_config)
+        
+        if source_state and source_state.values:
+            # Copy state to new thread
+            await app_graph.aupdate_state(new_config, source_state.values)
+            print(f"✅ Forked {source_thread_id} -> {new_thread_id}")
+        else:
+            print(f"⚠️ No state found for {source_thread_id}")
             
-        return {
-            "run_id": run_id,
-            "metadata": checkpoint.get("metadata", {}),
-            # "channel_values": checkpoint.get("channel_values", {}) # This might be raw
-        }
     except Exception as e:
-        print(f"Error reading run details: {e}")
-        return None
+        print(f"Error forking run: {e}")
+        raise
+    
+    return new_thread_id
 
-async def fork_run(source_run_id: str, checkpoint_id: str = None) -> str:
+
+async def find_checkpoint_for_rewind(
+    run_id: str, 
+    node_id: str
+) -> Optional[Tuple[str, str]]:
     """
-    Fork a run from a specific point to a new thread.
-    Returns the new run_id.
+    Find the checkpoint before a specific node execution.
+    
+    This searches through the checkpoint history to find the state before
+    the specified node was executed.
+    
+    Args:
+        run_id: The run ID to search in
+        node_id: The node ID to find
+        
+    Returns:
+        Tuple of (thread_id, checkpoint_id) or None if not found
     """
-    if not checkpointer.memory:
-        raise RuntimeError("Checkpointer not initialized")
-
-    new_run_id = str(uuid.uuid4())
+    from app_graph import app_graph
     
-    # Configuration for source and destination
-    source_config = {"configurable": {"thread_id": source_run_id, "checkpoint_ns": ""}}
-    if checkpoint_id:
-        source_config["configurable"]["checkpoint_id"] = checkpoint_id
+    try:
+        config = {"configurable": {"thread_id": run_id}}
         
-    dest_config = {"configurable": {"thread_id": new_run_id, "checkpoint_ns": ""}}
-
-    # 1. Get the source checkpoint
-    # Use memory.aget_tuple if available or aget
-    # memory.aget returns specific checkpoint data if found
-    checkpoint_tuple = await checkpointer.memory.aget_tuple(source_config)
-    
-    if not checkpoint_tuple or not checkpoint_tuple.checkpoint:
-        raise ValueError(f"No checkpoint found for {source_run_id}")
-
-    current_checkpoint = checkpoint_tuple.checkpoint
-    current_metadata = checkpoint_tuple.metadata or {}
-    
-    # 2. Update metadata to link lineage
-    new_metadata = current_metadata.copy()
-    new_metadata["parent_run_id"] = source_run_id
-    new_metadata["forked_from_checkpoint_id"] = checkpoint_tuple.config.get("checkpoint_id")
-    
-    # 3. Save to new thread
-    # We use aput to save the checkpoint to the new thread
-    # Note: langgraph checkpoints are immutable, so we write the *same* checkpoint data 
-    # but keyed to the new thread.
-    
-    # For a clean fork, we might want to just rely on the fact that we can start a run with 
-    # a specific state. But to make it "resumable" immediately as if it was there, 
-    # we inject the state.
-    
-    await checkpointer.memory.aput(dest_config, current_checkpoint, new_metadata, {})
-    
-    print(f"🍴 Forked run {source_run_id} -> {new_run_id}")
-    return new_run_id
-
-async def find_checkpoint_for_rewind(run_id: str, node_id: str) -> Optional[Tuple[str, str]]:
-    """
-    Find the (thread_id, checkpoint_id) representing the state *before* the specified node executed.
-    
-    Strategy:
-    1. Check if node_id is in the current thread's graph_plan.
-    2. If yes, find the checkpoint before it started.
-    3. If no, and there is an inner_thread_id, recurse into that thread.
-    """
-    if not checkpointer.memory:
-        return None
-        
-    config = {"configurable": {"thread_id": run_id, "checkpoint_ns": ""}}
-    print(f"🔍 SEARCHING: Node '{node_id}' in thread '{run_id}'")
-    
-    # 1. Get latest state to see where we are
-    latest_tuple = await checkpointer.memory.aget_tuple(config)
-    if not latest_tuple or not latest_tuple.checkpoint:
-        return None
-        
-    checkpoint_vals = latest_tuple.checkpoint.get("channel_values", {})
-    graph_plan = checkpoint_vals.get("graph_plan", {})
-    plan_nodes = graph_plan.get("nodes", [])
-    plan_node_ids = [n.get("id") for n in plan_nodes]
-    
-    # CASE A: Node is in THIS thread's plan
-    if node_id in plan_node_ids:
-        print(f"✅ FOUND: '{node_id}' is in plan for '{run_id}'")
-        # Find the checkpoint just before this node's name appeared in 'tasks' or before it finished
-        # For simplicity in Dynamic Graph, nodes run sequentially in the inner thread.
-        # We look for the newest checkpoint where 'node_id' is NOT yet in 'results'.
-        
+        # Get checkpoint history
         checkpoints = []
-        async for cp in checkpointer.memory.alist(config):
-            checkpoints.append(cp)
+        async for state in app_graph.aget_state_history(config):
+            checkpoints.append(state)
         
-        # Newest first. Find the first checkpoint where the node results don't exist yet
-        for cp in checkpoints:
-            vals = cp.checkpoint.get("channel_values", {})
-            results = vals.get("results", {})
-            if node_id not in results:
-                # This is a state where the node hasn't finished.
-                # Is it the state JUST BEFORE it started?
-                # In LangGraph, moving from node A to node B creates a checkpoint.
-                return (run_id, cp.config.get("configurable", {}).get("checkpoint_id"))
-
-        # Fallback: earliest checkpoint
-        if checkpoints:
-            return (run_id, checkpoints[-1].config.get("configurable", {}).get("checkpoint_id"))
-            
-    # CASE B: Node might be in an INNER thread
-    inner_thread_id = checkpoint_vals.get("inner_thread_id")
-    if inner_thread_id:
-        print(f"⏬ Node not in '{run_id}'. Recursing into inner thread '{inner_thread_id}'")
-        return await find_checkpoint_for_rewind(inner_thread_id, node_id)
+        # Search through checkpoints for the node execution
+        for i, state in enumerate(checkpoints):
+            if state.values and state.metadata:
+                # Check if this checkpoint contains the node execution
+                # The checkpoint BEFORE this one is what we want
+                if i + 1 < len(checkpoints):
+                    prev_state = checkpoints[i + 1]
+                    if prev_state.config:
+                        thread_id = prev_state.config.get("configurable", {}).get("thread_id", run_id)
+                        checkpoint_id = prev_state.config.get("configurable", {}).get("checkpoint_id")
+                        if checkpoint_id:
+                            return (thread_id, checkpoint_id)
         
-    # CASE C: Node might be a 'graph_compiler' child (Legacy/Branch approach)
-    # If the user selected a top-level node but we don't see it in plan_nodes (unlikely)
-    # Or if we want to support the 'Branch-Level' as a fallback.
+    except Exception as e:
+        print(f"Error finding checkpoint for rewind: {e}")
     
-    print(f"❌ '{node_id}' not found in '{run_id}' and no more inner threads.")
     return None
 
 
-
-
-async def get_nodes_to_invalidate(run_id: str, target_node_id: str) -> List[str]:
+async def get_nodes_to_invalidate(thread_id: str, node_id: str) -> List[str]:
     """
-    Get the list of node IDs that need to be invalidated when rewinding to target_node_id.
-    This includes the target node and all nodes that depend on it (directly or transitively).
-    """
-    if not checkpointer.memory:
-        return [target_node_id]
+    Get list of nodes that should be invalidated when rewinding to a specific node.
     
-    config = {"configurable": {"thread_id": run_id, "checkpoint_ns": ""}}
+    This analyzes the graph structure to find all nodes that depend on the
+    specified node and should have their results cleared.
+    
+    Args:
+        thread_id: The thread ID
+        node_id: The node ID to rewind to
+        
+    Returns:
+        List of node IDs to invalidate
+    """
+    from app_graph import app_graph
     
     try:
-        # Get the graph plan from the latest checkpoint
-        latest_state = await checkpointer.memory.aget_tuple(config)
-        if not latest_state or not latest_state.checkpoint:
-            return [target_node_id]
+        config = {"configurable": {"thread_id": thread_id}}
+        state = await app_graph.aget_state(config)
         
-        checkpoint_vals = latest_state.checkpoint.get("channel_values", {})
-        graph_plan = checkpoint_vals.get("graph_plan", {})
+        if not state or not state.values:
+            return []
+        
+        # Get the graph plan to understand dependencies
+        graph_plan = state.values.get("graph_plan", {})
         nodes = graph_plan.get("nodes", [])
+        edges = graph_plan.get("edges", [])
         
-        # Build dependency graph
-        node_deps = {}
-        for node in nodes:
-            node_deps[node["id"]] = set(node.get("dependencies", []))
+        # Find all nodes that come after the target node in the execution graph
+        nodes_to_clear = []
         
-        # Find all nodes that depend on target (BFS/DFS)
-        to_invalidate = {target_node_id}
-        changed = True
-        while changed:
-            changed = False
-            for node_id, deps in node_deps.items():
-                if node_id not in to_invalidate:
-                    # If any of this node's dependencies are being invalidated, invalidate this too
-                    if deps & to_invalidate:
-                        to_invalidate.add(node_id)
-                        changed = True
+        # Build adjacency list for graph traversal
+        adjacency = {}
+        for edge in edges:
+            source = edge.get("source")
+            target = edge.get("target")
+            if source not in adjacency:
+                adjacency[source] = []
+            adjacency[source].append(target)
         
-        result = list(to_invalidate)
-        print(f"🔄 Nodes to invalidate for rewind to '{target_node_id}': {result}")
-        return result
+        # BFS to find all downstream nodes
+        queue = [node_id]
+        visited = set()
+        
+        while queue:
+            current = queue.pop(0)
+            if current in visited:
+                continue
+            visited.add(current)
+            nodes_to_clear.append(current)
+            
+            # Add all children to queue
+            if current in adjacency:
+                for child in adjacency[current]:
+                    if child not in visited:
+                        queue.append(child)
+        
+        return nodes_to_clear
+        
     except Exception as e:
-        print(f"⚠️ Error computing nodes to invalidate: {e}")
-        return [target_node_id]
+        print(f"Error getting nodes to invalidate: {e}")
+        return []
 
+
+async def get_run_details(run_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get detailed information about a specific run.
+    
+    Args:
+        run_id: The run ID to get details for
+        
+    Returns:
+        Dictionary with run details or None if not found
+    """
+    from app_graph import app_graph
+    
+    try:
+        config = {"configurable": {"thread_id": run_id}}
+        state = await app_graph.aget_state(config)
+        
+        if not state or not state.values:
+            return None
+        
+        return {
+            "run_id": run_id,
+            "task": state.values.get("task", ""),
+            "subtasks": state.values.get("subtasks", []),
+            "synthesis": state.values.get("synthesis", ""),
+            "all_agents": state.values.get("all_agents", []),
+            "all_edges": state.values.get("all_edges", []),
+            "usage_stats": state.values.get("usage_stats", {}),
+            "next": list(state.next) if state.next else [],
+        }
+        
+    except Exception as e:
+        print(f"Error getting run details: {e}")
+        return None
+
+
+async def delete_run(run_id: str) -> bool:
+    """
+    Delete a run and all its checkpoints from the database.
+    
+    Args:
+        run_id: The run ID to delete
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    if not DATABASE_URL:
+        return False
+    
+    try:
+        async with await psycopg.AsyncConnection.connect(DATABASE_URL) as conn:
+            async with conn.cursor() as cur:
+                # Delete checkpoints for this thread
+                await cur.execute(
+                    "DELETE FROM checkpoints WHERE thread_id = %s",
+                    (run_id,)
+                )
+                # Delete checkpoint blobs
+                await cur.execute(
+                    "DELETE FROM checkpoint_blobs WHERE thread_id = %s",
+                    (run_id,)
+                )
+                await conn.commit()
+                print(f"✅ Deleted run {run_id}")
+                return True
+                
+    except Exception as e:
+        print(f"Error deleting run: {e}")
+        return False

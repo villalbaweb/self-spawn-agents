@@ -2,21 +2,19 @@
 Persistence module for Self-Spawn Agents.
 
 Provides:
-- checkpointer: SQLite-based checkpointing for state persistence
+- checkpointer: PostgreSQL-based checkpointing for state persistence with connection pooling
 - history: Time-travel, fork, and hydration utilities
 """
 from core.persistence.checkpointer import (
-    memory,
-    get_memory,
+    get_checkpointer,
     init_checkpointer,
     close_checkpointer,
-    CHECKPOINT_DB_PATH,
+    DATABASE_URL,
 )
 
 __all__ = [
-    "memory",
-    "get_memory",
+    "get_checkpointer",
     "init_checkpointer",
     "close_checkpointer",
-    "CHECKPOINT_DB_PATH",
+    "DATABASE_URL",
 ]

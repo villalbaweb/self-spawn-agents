@@ -53,6 +53,7 @@ The test suite is divided into Unit and Integration tests.
 - **`test_compiler.py`**: Unit tests for the `graph_compiler_node` logic.
 - **`test_cost_tracking.py`**: Verifies that the `CostTracker` accurately accumulates tokens and USD costs across different nodes.
 - **`test_nodes.py`**: Tests individual nodes (like `validate_node`) in total isolation with mock states.
+- **`test_postgres_persistence.py`**: Tests PostgreSQL checkpointer concurrency handling and connection pooling. Verifies that concurrent writes to the same thread_id complete without locking errors.
 
 ## ➕ Adding New Tests
 
@@ -62,12 +63,19 @@ When adding new functionality, follow these steps to add corresponding tests:
 - **Unit Test**: If testing a single function/node with no dependencies.
 - **Integration Test**: If testing how a node interacts with the state or other nodes in a graph.
 
-### 2. Mocking LangGraph Dependencies
+### 2. PostgreSQL Persistence Tests
+When testing persistence layer functionality:
+- Ensure `DATABASE_URL` environment variable is set before running tests
+- Tests require a running PostgreSQL instance (use `docker-compose -f docker-compose.local.yml up -d postgres`)
+- Use `init_checkpointer()` and `close_checkpointer()` for proper lifecycle management
+
+### 3. Mocking LangGraph Dependencies
 LangGraph nodes often require a checkpointer. When testing nodes that compile subgraphs:
-- Use `langgraph.checkpoint.memory.MemorySaver` for mocking `agents.shared_memory.memory`.
+- For PostgreSQL tests, use the actual `AsyncPostgresSaver` with a test database
+- For other tests, use `langgraph.checkpoint.memory.MemorySaver` for mocking
 - Avoid `MagicMock` for checkpointers as LangGraph performs instance checks.
 
-### 3. Mocking LLMs
+### 4. Mocking LLMs
 To keep tests fast and deterministic:
 - Patch `with_structured_output` on the `llm` instance used in the module under test.
 - Example:
@@ -76,8 +84,8 @@ To keep tests fast and deterministic:
       mock_llm.with_structured_output.return_value.ainvoke = AsyncMock(return_value=YourPydanticModel(...))
   ```
 
-### 4. Handling State
+### 5. Handling State
 Use the factories in `System_Testing/tests/utils/mocks.py` or `conftest.py` to generate consistent `AgentState` objects.
 
-### 5. Verify the Return Structure
+### 6. Verify the Return Structure
 Most nodes return a dictionary. Ensure your test asserts both the specific output AND the presence of `usage_stats` if the node tracks costs.
