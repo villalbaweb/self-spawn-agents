@@ -534,7 +534,7 @@ async def graph_executor_node(state: AgentState, config: RunnableConfig = None) 
     if inner_state.next:
         print(f" More interrupts pending. Returning self-loop Command.")
         return Command(
-            goto="graph_compiler", 
+            goto="graph_executor", 
             update={"inner_thread_id": inner_thread_id} 
         )
     

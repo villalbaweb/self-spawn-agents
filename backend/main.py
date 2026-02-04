@@ -568,7 +568,33 @@ async def resume_run(run_id: str, request: ResumeRequest):
         try:
             # Use Command(resume=value) to pass the user's decision to the interrupted node
             from langgraph.types import Command
-            resume_command = Command(resume=resume_value)
+            
+            # CRITICAL FIX: When there are multiple pending interrupts (e.g., nested graphs),
+            # we must provide a dict mapping interrupt IDs to resume values.
+            # Query the graph state to extract all interrupt IDs.
+            graph_state = await app_graph.aget_state(config)
+            
+            interrupt_ids = []
+            if graph_state.tasks:
+                for task in graph_state.tasks:
+                    if task.interrupts:
+                        for interrupt_obj in task.interrupts:
+                            if hasattr(interrupt_obj, 'id'):
+                                interrupt_ids.append(interrupt_obj.id)
+            
+            # If multiple interrupts exist, map the resume value to each interrupt ID
+            if len(interrupt_ids) > 1:
+                print(f"🔀 Multiple interrupts detected ({len(interrupt_ids)}). Mapping resume value to all interrupt IDs.")
+                resume_payload = {iid: resume_value for iid in interrupt_ids}
+                resume_command = Command(resume=resume_payload)
+            elif len(interrupt_ids) == 1:
+                # Single interrupt - can use simple resume value
+                print(f"✅ Single interrupt detected. Using simple resume value.")
+                resume_command = Command(resume=resume_value)
+            else:
+                # No interrupts found - this shouldn't happen, but handle gracefully
+                print(f"⚠️ No interrupts found in graph state. Attempting simple resume.")
+                resume_command = Command(resume=resume_value)
             
             # Resume the graph by streaming with the Command as input
             async for event in app_graph.astream_events(resume_command, config=config, version="v2"):

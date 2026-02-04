@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field
 from core.state.worker_state import WorkerState
 from agents.task_executor import task_executor_node
 from agents.confidence_evaluator import evaluate_confidence
+from agents.result_summarizer import summarize_result, should_compress_result
 from config.settings import MAX_RECURSION_DEPTH
 from config.llm_providers import llm_mini
 from utils.rate_limiter import safe_ainvoke
@@ -648,13 +649,72 @@ async def validate_node(state: WorkerState, config: RunnableConfig = None) -> Di
         return {"confidence_score": 0.5, "confidence_reasoning": f"Validation failed: {e}"}
 
 
+async def summarize_execution_node(state: WorkerState, config: RunnableConfig = None) -> Dict[str, Any]:
+    """
+    Summarize execution results if they exceed token threshold.
+    
+    CRITICAL SAFEGUARD: This node prevents context bloat by compressing
+    verbose results before returning to parent. Compression is depth-aware:
+    deeper levels get more aggressive compression.
+    
+    Flow:
+    1. Check result size against threshold
+    2. If exceeds threshold, invoke result_summarizer agent
+    3. Replace verbose result with structured summary
+    4. Return updated state
+    
+    Args:
+        state: Current WorkerState
+        config: RunnableConfig for LLM calls
+        
+    Returns:
+        State updates with compressed results and usage stats
+    """
+    results = state.get("results", {})
+    task = state.get("task", "")
+    depth = state.get("depth", 0)
+    root_task_id = state.get("root_task_id")
+    parent_id = state.get("parent_node_id", "worker")
+    
+    # Skip if no results or already aborted
+    if not results or not results.get(parent_id):
+        print(f"   [Summarizer] Skipping - no results to compress")
+        return {}
+    
+    result_text = results[parent_id]
+    
+    # Check if compression is needed
+    if not should_compress_result(result_text, depth):
+        print(f"   [Summarizer] Depth {depth}: Below threshold, no compression needed")
+        return {}
+    
+    print(f"   🗜️ [Summarizer] Compressing result at depth {depth}...")
+    
+    compressed_result, usage_stats = await summarize_result(
+        task=task,
+        result=result_text,
+        depth=depth,
+        root_task_id=root_task_id,
+        config=config
+    )
+    
+    # Update results with compressed version
+    updated_results = dict(results)
+    updated_results[parent_id] = compressed_result
+    
+    return {
+        "results": updated_results,
+        "usage_stats": usage_stats
+    }
+
+
 # --- BUILD THE RECURSIVE EXECUTOR ---
 
 def build_recursive_executor() -> StateGraph:
     """
     Build the Recursive Executor graph.
     
-    Flow: START → execute → validate → END
+    Flow: START → execute → validate → summarize → END
     
     The execute node handles both simple and complex tasks internally,
     using mini-orchestration when needed instead of full app_graph.
@@ -663,15 +723,21 @@ def build_recursive_executor() -> StateGraph:
     When execute_node creates a mini-plan, each child task can itself
     spawn a new recursive_executor if it's complex enough. This is enabled
     by passing `_get_compiled_subgraph()` to `execute_mini_plan()`.
+    
+    CONTEXT COMPRESSION (Epic 5):
+    The summarize node prevents context bloat by compressing verbose results
+    before returning to parent. This is critical for deep recursion (depth 2+).
     """
     graph = StateGraph(WorkerState)
     
     graph.add_node("execute", execute_node)
     graph.add_node("validate", validate_node)
+    graph.add_node("summarize", summarize_execution_node)
     
     graph.add_edge(START, "execute")
     graph.add_edge("execute", "validate")
-    graph.add_edge("validate", END)
+    graph.add_edge("validate", "summarize")
+    graph.add_edge("summarize", END)
     
     return graph
 
