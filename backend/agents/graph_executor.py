@@ -414,9 +414,23 @@ async def graph_executor_node(state: AgentState, config: RunnableConfig = None) 
         # --- RESUME PATH ---
         print(f"⏸️ Inner graph paused at: {inner_state.next}. Bubbling up interrupt...")
         
+        # 🔍 [Interrupt Debug] Log inner graph interrupt details
+        print(f"🔍 [Interrupt Debug] Inner Graph Interrupt:")
+        print(f"   - Paused nodes: {list(inner_state.next)}")
+        print(f"   - Depth: {state.get('depth', 0)}")
+        
         # 1. Aggregate State
         agg_agents, agg_edges = _aggregate_graph_data(inner_state.values)
         inner_interrupts = [t.interrupts for t in inner_state.tasks if t.interrupts] if inner_state.tasks else []
+        
+        # 🔍 [Interrupt Debug] Log interrupt objects found
+        if inner_interrupts:
+            interrupt_count = sum(len(i_list) for i_list in inner_interrupts)
+            print(f"   - Inner interrupts found: {interrupt_count}")
+            for i_list in inner_interrupts:
+                for i in i_list:
+                    if hasattr(i, 'id'):
+                        print(f"     • Interrupt ID: {i.id}")
         
         confidence_score = 0.0
         confidence_reasoning = ""
@@ -467,6 +481,11 @@ async def graph_executor_node(state: AgentState, config: RunnableConfig = None) 
         
         # 2. INTERRUPT
         resume_value = interrupt(interrupt_data)
+        
+        # 🔍 [Interrupt Debug] Log resume value received
+        print(f"🔍 [Interrupt Debug] Inner Graph Resume value received:")
+        print(f"   - Type: {type(resume_value)}")
+        print(f"   - Value: {resume_value}")
         print(f"✅ Outer graph resumed with: {resume_value}")
         
         # 3. RESUME INNER GRAPH

@@ -253,7 +253,12 @@ async def task_executor_node(state: dict, instruction: str, agent_type: str, con
 
         # --- TIER 3: HARD STOP (HITL) ---
         if confidence_score < TIER3_THRESHOLD:
-            print(f"🛑 [HITL] Tier 3 Hard Stop triggered (Confidence: {confidence_score:.2f}, Threshold: {TIER3_THRESHOLD})")
+            print(f"🛑 [HITL Tier 3] Triggering Hard Stop interrupt")
+            print(f"🔍 [Interrupt Debug] Tier 3 Details:")
+            print(f"   - Agent: {agent_type}")
+            print(f"   - Confidence: {confidence_score:.4f}")
+            print(f"   - Threshold: {TIER3_THRESHOLD}")
+            print(f"   - Reasoning: {confidence_reasoning[:100]}...")
             
             interrupt_payload = {
                 "type": "tier3_interrupt",
@@ -268,16 +273,41 @@ async def task_executor_node(state: dict, instruction: str, agent_type: str, con
             # The function will suspend. When resumed, resume_value will contain the user's input.
             resume_value = interrupt(interrupt_payload)
             
-            print(f"✅ [HITL] Tier 3 Resumed with: {resume_value}")
+            # 🔍 [Interrupt Debug] Log resume value received
+            print(f"🔍 [Interrupt Debug] Tier 3 Resume value received:")
+            print(f"   - Type: {type(resume_value)}")
+            print(f"   - Value: {resume_value}")
             
             # Handle Resume Logic
             if resume_value and isinstance(resume_value, dict):
+                action = resume_value.get("action", "proceed")
+                print(f"✅ [HITL Tier 3] Resuming with action: {action}")
+                
                 # Scenario A: User provided a manual fix
-                if "output" in resume_value:
+                if action == "manual_fix" and "output" in resume_value:
                     final_output = resume_value["output"]
                     confidence_score = 1.0
                     confidence_reasoning = "Manually corrected by user."
-                # Scenario B: User said "proceed" (resume_value might be simple action flag) - we keep original output
+                    print(f"   ✏️ Using manual fix from user")
+                
+                # Scenario B: User said "proceed" - keep original output
+                elif action == "proceed":
+                    print(f"   ➡️ Proceeding with original output (confidence override)")
+                    confidence_score = 0.6  # Bump to minimum acceptable
+                    confidence_reasoning += " [User override: proceed despite low confidence]"
+                
+                # Scenario C: User said "abort"
+                elif action == "abort":
+                    print(f"   🛑 User requested abort")
+                    final_output = "[ABORTED BY USER]"
+                    confidence_score = 0.0
+                    confidence_reasoning = "Execution aborted by user."
+                
+                # Scenario D: User said "retry" (not implemented yet)
+                elif action == "retry":
+                    print(f"   🔄 Retry requested (not implemented, proceeding)")
+                    confidence_score = 0.6
+
                 
         # --- TIER 2: SOFT FLAG ---
         low_confidence_flag = confidence_score < TIER2_THRESHOLD

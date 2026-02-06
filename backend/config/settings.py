@@ -25,6 +25,10 @@ MAX_CONCURRENCY = int(os.getenv("LLM_MAX_CONCURRENCY", "10"))
 # --- PERSISTENCE ---
 CHECKPOINT_DB_PATH = os.getenv("CHECKPOINT_DB_PATH", "checkpoints.db")
 
+# --- INTERRUPT TIMEOUT ---
+# Maximum time (in seconds) an interrupt can remain pending before auto-cleanup
+INTERRUPT_TIMEOUT_SECONDS = int(os.getenv("INTERRUPT_TIMEOUT_SECONDS", "300"))  # 5 minutes default
+
 # --- API KEYS (accessed via os.getenv where needed) ---
 # These are read directly where needed to avoid exposing secrets
 # OPENAI_API_KEY, DEEPSEEK_API_KEY, SERPER_API_KEY, E2B_API_KEY
