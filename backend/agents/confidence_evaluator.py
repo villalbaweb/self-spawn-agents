@@ -26,8 +26,8 @@ async def evaluate_confidence(instruction: str, output: str, config: RunnableCon
         config: Optional RunnableConfig with thread_id
         root_task_id: Optional root task ID for cost attribution (overrides config thread_id)
     """
-    evaluation_prompt = f"""<role>Precision Quality Evaluator</role>
-<objective>Assess the fidelity and completeness of the agent's output relative to the original instruction.</objective>
+    evaluation_prompt = f"""<role>Precision Quality Evaluator with Hallucination Detection</role>
+<objective>Assess the fidelity, completeness, and factual grounding of the agent's output relative to the original instruction.</objective>
 
 <input_data>
     <user_instruction>
@@ -40,10 +40,23 @@ async def evaluate_confidence(instruction: str, output: str, config: RunnableCon
 
 <constraints>
 - Rate the output on a scale from 0.0 to 1.0.
-- **Criteria**:
+- **Primary Criteria**:
     1. **Goal Achievement**: Did the agent fulfill the core mission? If it says "not found" or "cannot find", the score must be <= 0.2.
-    2. **Completeness**: Are all parts of the instruction addressed?
-    3. **Accuracy**: Is the info reliable and non-vague?
+    2. **Factual Grounding** (CRITICAL FOR HALLUCINATION DETECTION):
+       - Does the output cite specific sources (URLs, references, data points)?
+       - Does it acknowledge uncertainty when data is unavailable?
+       - Does it make calculations/claims based on fictional or assumed values?
+    3. **Completeness**: Are all parts of the instruction addressed?
+    4. **Accuracy**: Is the info reliable and non-vague?
+
+- **Hallucination Detection Rules** (MUST APPLY):
+    - If the task requires factual lookup (stock prices, research, specific data) BUT the output:
+      * Fabricates data without citing verifiable sources → Score MUST be < 0.35
+      * Makes calculations based on fictional assumptions → Score MUST be < 0.35
+      * Speculates instead of acknowledging data unavailability → Score MUST be < 0.35
+    - If the output explicitly states "I cannot find..." or "This data is unavailable" → Score 0.2-0.3 (honest failure)
+    - If the output cites specific URLs, sources, or data points → Evaluate normally (0.5-1.0 range)
+
 - **Workflow**: Perform a critical analysis of the output (Reasoning) BEFORE providing the final score.
 - **Output Format**: Return ONLY a JSON object.
 </constraints>
@@ -51,7 +64,7 @@ async def evaluate_confidence(instruction: str, output: str, config: RunnableCon
 <task>
 Analyze the <candidate_output> against the <user_instruction> and produce the JSON response:
 {{
-  "reasoning": "Detailed justification...",
+  "reasoning": "Detailed justification including hallucination check...",
   "confidence_score": 0.X
 }}
 </task>"""
