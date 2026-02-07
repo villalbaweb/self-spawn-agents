@@ -293,6 +293,12 @@ async def execute_mini_plan(
                 }
                 
         except Exception as e:
+            # CRITICAL FIX: Re-raise LangGraph interrupt exceptions so they bubble up properly
+            from langgraph.errors import GraphBubbleUp
+            if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__:
+                print(f"⏸️ [execute_mini_plan] Interrupt detected in task {mini_task.id}, bubbling up: {type(e).__name__}")
+                raise  # Re-raise to propagate interrupt
+            
             return {
                 "task_id": mini_task.id,
                 "output": f"[Error: {str(e)}]",
@@ -604,6 +610,13 @@ async def execute_node(state: WorkerState, config: RunnableConfig = None) -> Dic
             }
             
         except Exception as e:
+            # CRITICAL FIX: Re-raise LangGraph interrupt exceptions so they bubble up properly
+            # to the outer graph instead of being caught as errors
+            from langgraph.errors import GraphBubbleUp
+            if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__:
+                print(f"⏸️ [WorkerSubgraph] Interrupt detected, bubbling up: {type(e).__name__}")
+                raise  # Re-raise to let it propagate
+            
             print(f"❌ [WorkerSubgraph] Execution error: {e}")
             return {
                 "results": {parent_id: f"[Error: {str(e)}]"},

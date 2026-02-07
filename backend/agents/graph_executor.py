@@ -407,119 +407,133 @@ async def graph_executor_node(state: AgentState, config: RunnableConfig = None) 
         # Data is already aggregated by nodes during execution
         return inner_state_data.get("all_agents", []), inner_state_data.get("all_edges", [])
 
-    # --- 3. CHECK FOR RESUME or START ---
-    inner_state = await app.aget_state(inner_config)
-    
-    if inner_state.next:
-        # --- RESUME PATH ---
-        print(f"⏸️ Inner graph paused at: {inner_state.next}. Bubbling up interrupt...")
+    # --- 3. MAIN EXECUTION LOOP ---
+    # Use a while loop to handle execution, but RETURN a Command after interrupt
+    # to persist the inner_thread_id in the outer graph state
+    while True:
+        inner_state = await app.aget_state(inner_config)
         
-        # 🔍 [Interrupt Debug] Log inner graph interrupt details
-        print(f"🔍 [Interrupt Debug] Inner Graph Interrupt:")
-        print(f"   - Paused nodes: {list(inner_state.next)}")
-        print(f"   - Depth: {state.get('depth', 0)}")
-        
-        # 1. Aggregate State
-        agg_agents, agg_edges = _aggregate_graph_data(inner_state.values)
-        inner_interrupts = [t.interrupts for t in inner_state.tasks if t.interrupts] if inner_state.tasks else []
-        
-        # 🔍 [Interrupt Debug] Log interrupt objects found
-        if inner_interrupts:
-            interrupt_count = sum(len(i_list) for i_list in inner_interrupts)
-            print(f"   - Inner interrupts found: {interrupt_count}")
-            for i_list in inner_interrupts:
-                for i in i_list:
-                    if hasattr(i, 'id'):
-                        print(f"     • Interrupt ID: {i.id}")
-        
-        confidence_score = 0.0
-        confidence_reasoning = ""
-        current_agent_data = None
-        
-        if inner_interrupts:
-            for i_list in inner_interrupts:
-                for i in i_list:
-                    val = i.value if hasattr(i, "value") else i
-                    if isinstance(val, dict) and val.get("type") == "tier3_interrupt":
-                        confidence_score = val.get("confidence_score", 0.0)
-                        confidence_reasoning = val.get("reasoning", "")
-                        current_agent_data = {
-                            "id": list(inner_state.next)[0] if inner_state.next else "unknown",
-                            "role": val.get("agent_type", "Unknown"),
-                            "status": "review_required",
-                            "output": val.get("current_output", ""),
-                            "confidence_score": confidence_score,
-                            "confidence_reasoning": confidence_reasoning,
-                            "depth": state.get("depth", 0)
-                        }
-                        for n in nodes:
-                            if n["id"] == current_agent_data["id"]:
-                                current_agent_data["instruction"] = n["instruction"]
-                                break
-                        break
-        
-        if current_agent_data:
-            # Update or Add the agent in review
-            found = False
-            for agent in agg_agents:
-                if agent["id"] == current_agent_data["id"]:
-                    agent.update(current_agent_data)
-                    found = True
-                    break
-            if not found:
-                agg_agents.append(current_agent_data)
+        if inner_state.next:
+            # --- INTERRUPT PATH: Inner graph is paused ---
+            print(f"⏸️ Inner graph paused at: {inner_state.next}. Bubbling up interrupt...")
+            
+            # 🔍 [Interrupt Debug] Log inner graph interrupt details
+            print(f"🔍 [Interrupt Debug] Inner Graph Interrupt:")
+            print(f"   - Paused nodes: {list(inner_state.next)}")
+            print(f"   - Depth: {state.get('depth', 0)}")
+            
+            # 1. Aggregate State
+            agg_agents, agg_edges = _aggregate_graph_data(inner_state.values)
+            inner_interrupts = [t.interrupts for t in inner_state.tasks if t.interrupts] if inner_state.tasks else []
+            
+            # 🔍 [Interrupt Debug] Log interrupt objects found
+            if inner_interrupts:
+                interrupt_count = sum(len(i_list) for i_list in inner_interrupts)
+                print(f"   - Inner interrupts found: {interrupt_count}")
+                for i_list in inner_interrupts:
+                    for i in i_list:
+                        if hasattr(i, 'id'):
+                            print(f"     • Interrupt ID: {i.id}")
+            
+            confidence_score = 0.0
+            confidence_reasoning = ""
+            
+            # CRITICAL FIX: Process ALL interrupted agents, not just the first one
+            paused_nodes = list(inner_state.next) if inner_state.next else []
+            if inner_interrupts:
+                for idx, i_list in enumerate(inner_interrupts):
+                    for i in i_list:
+                        val = i.value if hasattr(i, "value") else i
+                        if isinstance(val, dict) and val.get("type") == "tier3_interrupt":
+                            # Get the corresponding paused node ID for this interrupt
+                            agent_id = paused_nodes[idx] if idx < len(paused_nodes) else val.get("agent_id", f"node_{idx+1}")
+                            
+                            # Use the first interrupt's confidence for the main interrupt event
+                            if confidence_score == 0.0:
+                                confidence_score = val.get("confidence_score", 0.0)
+                                confidence_reasoning = val.get("reasoning", "")
+                            
+                            agent_data = {
+                                "id": agent_id,
+                                "role": val.get("agent_type", "Unknown"),
+                                "status": "review_required",
+                                "output": val.get("current_output", ""),
+                                "confidence_score": val.get("confidence_score", 0.0),
+                                "confidence_reasoning": val.get("reasoning", ""),
+                                "depth": state.get("depth", 0)
+                            }
+                            
+                            # Add instruction from nodes list
+                            for n in nodes:
+                                if n["id"] == agent_id:
+                                    agent_data["instruction"] = n["instruction"]
+                                    break
+                            
+                            # Update or Add the agent
+                            found = False
+                            for agent in agg_agents:
+                                if agent["id"] == agent_id:
+                                    agent.update(agent_data)
+                                    found = True
+                                    break
+                            if not found:
+                                agg_agents.append(agent_data)
 
-        interrupt_data = {
-            "type": "inner_graph_interrupt",
-            "paused_at": list(inner_state.next),
-            "inner_interrupts": inner_interrupts,
-            "all_agents": agg_agents,
-            "all_edges": agg_edges,
-            "confidence_score": confidence_score,
-            "confidence_reasoning": confidence_reasoning
-        }
+
+            interrupt_data = {
+                "type": "inner_graph_interrupt",
+                "paused_at": list(inner_state.next),
+                "inner_interrupts": inner_interrupts,
+                "all_agents": agg_agents,
+                "all_edges": agg_edges,
+                "confidence_score": confidence_score,
+                "confidence_reasoning": confidence_reasoning,
+                "inner_thread_id": inner_thread_id  # Include for reference
+            }
+            
+            # 2. INTERRUPT - This suspends execution and bubbles up to outer graph
+            resume_value = interrupt(interrupt_data)
+            
+            # === AFTER RESUME: Outer graph called us again with the resume value ===
+            # This code executes when the outer graph resumes and calls graph_executor again
+            print(f"🔍 [Interrupt Debug] Inner Graph Resume value received:")
+            print(f"   - Type: {type(resume_value)}")
+            print(f"   - Value: {resume_value}")
+            print(f"✅ Outer graph resumed with: {resume_value}")
+            
+            # 3. RESUME INNER GRAPH with the resume value
+            resume_payload = resume_value
+            all_interrupt_objs = []
+            if inner_interrupts:
+                for i_tuple in inner_interrupts:
+                    for i_obj in i_tuple:
+                        all_interrupt_objs.append(i_obj)
+            
+            if all_interrupt_objs:
+                 resume_payload = {i.id: resume_value for i in all_interrupt_objs}
+            
+            try:
+                await app.ainvoke(Command(resume=resume_payload), config=inner_config)
+            except Exception as e:
+                from langgraph.errors import GraphBubbleUp
+                if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__:
+                    print(f"⏸️ Inner graph raised Interrupt during resumed execution.")
+                else:
+                    raise e
+            
+            # Continue loop to check for more interrupts after inner graph processes resume
+            continue
         
-        # 2. INTERRUPT
-        resume_value = interrupt(interrupt_data)
-        
-        # 🔍 [Interrupt Debug] Log resume value received
-        print(f"🔍 [Interrupt Debug] Inner Graph Resume value received:")
-        print(f"   - Type: {type(resume_value)}")
-        print(f"   - Value: {resume_value}")
-        print(f"✅ Outer graph resumed with: {resume_value}")
-        
-        # 3. RESUME INNER GRAPH
-        resume_payload = resume_value
-        all_interrupt_objs = []
-        if inner_interrupts:
-            for i_tuple in inner_interrupts:
-                for i_obj in i_tuple:
-                    all_interrupt_objs.append(i_obj)
-        
-        if all_interrupt_objs:
-             resume_payload = {i.id: resume_value for i in all_interrupt_objs}
-        
-        try:
-            await app.ainvoke(Command(resume=resume_payload), config=inner_config)
-        except Exception as e:
-            from langgraph.errors import GraphBubbleUp
-            if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__:
-                print(f"⏸️ Inner graph raised Interrupt during resumed execution.")
-            else:
-                raise e
-    
-    else:
-        # --- START PATH ---
-        if not inner_state.values:
-             print("▶️ Starting new Dynamic Graph Execution...")
-             initial_dynamic_state = {
+        elif not inner_state.values:
+            # --- START PATH: Inner graph hasn't started yet ---
+            print("▶️ Starting new Dynamic Graph Execution...")
+            initial_dynamic_state = {
                 "results": {},
                 "depth": state.get("depth", 0),
                 "subject": state.get("subject", ""),
                 "metadata": {},
                 # Add horizontal edges to the initial state
                 "all_agents": [],
-                # "all_edges": [{"source": e.source, "target": e.target, "depth": state.get("depth", 0)} for e in blueprint_edges],
                 "all_edges": [
                     # Dynamic edges
                     {"source": e.source, "target": e.target, "depth": state.get("depth", 0)} for e in blueprint_edges
@@ -536,37 +550,30 @@ async def graph_executor_node(state: AgentState, config: RunnableConfig = None) 
                 },
                 "root_task_id": state.get("root_task_id")
             }
-             try:
+            try:
                 await app.ainvoke(initial_dynamic_state, config=inner_config)
-             except Exception as e:
+            except Exception as e:
                 from langgraph.errors import GraphBubbleUp
                 if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__:
                     print(f"⏸️ Inner graph raised Initial Interrupt.")
                 else:
                     raise e
+            
+            # Continue loop to check state after initial execution
+            continue
+        
         else:
-            print("✅ Inner graph already completed (no next state).")
- 
-    # --- 4. CHECK LOOP CONDITION ---
-    inner_state = await app.aget_state(inner_config)
-    
-    if inner_state.next:
-        print(f" More interrupts pending. Returning self-loop Command.")
-        return Command(
-            goto="graph_executor", 
-            update={"inner_thread_id": inner_thread_id} 
-        )
-    
-    # --- 5. FINISH ---
-    print("✅ Dynamic Graph Execution Complete.")
-    combined_agents, combined_edges = _aggregate_graph_data(inner_state.values)
-    
-    return {
-        "results": inner_state.values.get("results", {}), 
-        "metadata": inner_state.values.get("metadata", {}),
-        "all_agents": combined_agents,
-        "all_edges": combined_edges,
-        "inner_thread_id": inner_thread_id,
-        "usage_stats": inner_state.values.get("usage_stats", {}),
-        "global_signal": inner_state.values.get("global_signal", "")
-    }
+            # --- COMPLETION PATH: Inner graph is done ---
+            print("✅ Dynamic Graph Execution Complete.")
+            combined_agents, combined_edges = _aggregate_graph_data(inner_state.values)
+            
+            return {
+                "results": inner_state.values.get("results", {}), 
+                "metadata": inner_state.values.get("metadata", {}),
+                "all_agents": combined_agents,
+                "all_edges": combined_edges,
+                "inner_thread_id": inner_thread_id,
+                "usage_stats": inner_state.values.get("usage_stats", {}),
+                "global_signal": inner_state.values.get("global_signal", "")
+            }
+

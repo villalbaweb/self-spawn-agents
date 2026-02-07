@@ -17,6 +17,8 @@ workflow.add_node("synthesizer", synthesizer_node)
 workflow.set_entry_point("task_decomposer")
 
 # Flow: Decomposer -> Planner -> Executor -> Synthesizer -> END
+# NOTE: graph_executor now uses internal while loop to handle all interrupts
+# before returning, so no Command routing or conditional edges needed
 workflow.add_edge("task_decomposer", "execution_planner")
 workflow.add_edge("execution_planner", "graph_executor")
 workflow.add_edge("graph_executor", "synthesizer")

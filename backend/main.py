@@ -77,6 +77,10 @@ running_tasks: Dict[str, asyncio.Task] = {}
 interrupt_registry: Dict[str, Dict[str, Any]] = {}
 # Structure: {run_id: {"timestamp": float, "interrupt_type": str, "confidence_score": float}}
 
+# Global registry for cumulative usage stats tracking (Cost Tracking Fix)
+cumulative_usage_registry: Dict[str, Dict[str, float]] = {}
+# Structure: {run_id: {"cost": float, "input_tokens": int, "output_tokens": int, "llm_calls": int, "tool_calls": int, "steps": int}}
+
 
 async def cleanup_stale_interrupts():
     """Background task to clean up stale interrupts."""
@@ -183,7 +187,30 @@ async def run_orchestrator(request: OrchestratorRequest):
                         # (latest_state['usage_stats'] only contains the last node's delta)
                         tracker = CostTracker.get_instance()
                         real_stats = tracker.to_usage_stats(task_id=req_id)
-                        yield f"data: {json.dumps({'type': 'usage_stats', 'stats': real_stats})}\n\n"
+                        
+                        # Accumulate into cumulative registry
+                        if req_id not in cumulative_usage_registry:
+                            cumulative_usage_registry[req_id] = {
+                                "cost": 0.0,
+                                "input_tokens": 0,
+                                "output_tokens": 0,
+                                "llm_calls": 0,
+                                "tool_calls": 0,
+                                "steps": 0,
+                                "cached_tokens": 0
+                            }
+                        
+                        # Update cumulative totals (use max to handle resets)
+                        cumulative_usage_registry[req_id]["cost"] = real_stats.get("cost", 0)
+                        cumulative_usage_registry[req_id]["input_tokens"] = real_stats.get("input_tokens", 0)
+                        cumulative_usage_registry[req_id]["output_tokens"] = real_stats.get("output_tokens", 0)
+                        cumulative_usage_registry[req_id]["llm_calls"] = real_stats.get("llm_calls", 0)
+                        cumulative_usage_registry[req_id]["tool_calls"] = real_stats.get("tool_calls", 0)
+                        cumulative_usage_registry[req_id]["steps"] = real_stats.get("steps", 0)
+                        cumulative_usage_registry[req_id]["cached_tokens"] = real_stats.get("cached_tokens", 0)
+                        
+                        # Emit cumulative stats instead of just current
+                        yield f"data: {json.dumps({'type': 'usage_stats', 'stats': cumulative_usage_registry[req_id]})}\n\n"
 
                 # We care about when nodes start for progress logs
                 if kind == "on_chain_start" and name in ["task_decomposer", "execution_planner", "graph_executor", "synthesizer"]:
@@ -201,28 +228,56 @@ async def run_orchestrator(request: OrchestratorRequest):
             if graph_state.next:
                 print(f"⏸️ Graph interrupted at: {graph_state.next}")
                 
-                # Extract extended interrupt data if available (from inner_graph_interrupt)
+                # Extract extended interrupt data from ALL tasks (not just the first one)
+                # When parallel nodes interrupt, there may be multiple tasks with interrupts
                 interrupt_payload = {}
-                if graph_state.tasks and len(graph_state.tasks) > 0:
-                    task_interrupts = graph_state.tasks[0].interrupts
-                    if task_interrupts and len(task_interrupts) > 0:
-                        interrupt_payload = task_interrupts[0] if isinstance(task_interrupts[0], dict) else {}
+                all_interrupt_agents = []
+                all_interrupt_edges = []
+                combined_confidence_score = 0.0
+                combined_confidence_reasoning = ""
+                
+                if graph_state.tasks:
+                    for task in graph_state.tasks:
+                        if task.interrupts:
+                            for interrupt_obj in task.interrupts:
+                                # Get the interrupt value (might be wrapped in an object)
+                                val = interrupt_obj.value if hasattr(interrupt_obj, 'value') else interrupt_obj
+                                if isinstance(val, dict):
+                                    # Collect agents from all interrupts
+                                    if val.get("all_agents"):
+                                        all_interrupt_agents.extend(val["all_agents"])
+                                    if val.get("all_edges"):
+                                        all_interrupt_edges.extend(val["all_edges"])
+                                    # Use first interrupt's confidence as primary
+                                    if combined_confidence_score == 0.0:
+                                        combined_confidence_score = val.get("confidence_score", 0.0)
+                                        combined_confidence_reasoning = val.get("confidence_reasoning", "")
+                                    # Merge other fields from first interrupt found
+                                    if not interrupt_payload:
+                                        interrupt_payload = val
+                
+                # Add combined agents/edges to payload
+                if all_interrupt_agents:
+                    interrupt_payload["all_agents"] = all_interrupt_agents
+                if all_interrupt_edges:
+                    interrupt_payload["all_edges"] = all_interrupt_edges
                 
                 # 🔍 [Interrupt Debug] Register interrupt in global registry
                 interrupt_registry[req_id] = {
                     "timestamp": time.time(),
                     "interrupt_type": interrupt_payload.get("type", "unknown"),
-                    "confidence_score": interrupt_payload.get("confidence_score", 0.0),
+                    "confidence_score": combined_confidence_score or interrupt_payload.get("confidence_score", 0.0),
                     "paused_at": list(graph_state.next)
                 }
                 print(f"🔍 [Interrupt Debug] Registered interrupt for run_id: {req_id}")
+                print(f"   - Combined agents: {len(all_interrupt_agents)}, edges: {len(all_interrupt_edges)}")
                 
                 # Yield interrupt event with all metadata
                 yield "data: " + json.dumps({
                     'type': 'interrupt', 
                     'next': list(graph_state.next), 
-                    'confidence_score': interrupt_payload.get('confidence_score', latest_state.get('confidence_score', 0.0)),
-                    'confidence_reasoning': interrupt_payload.get('confidence_reasoning', latest_state.get('confidence_reasoning', '')),
+                    'confidence_score': combined_confidence_score or interrupt_payload.get('confidence_score', latest_state.get('confidence_score', 0.0)),
+                    'confidence_reasoning': combined_confidence_reasoning or interrupt_payload.get('confidence_reasoning', latest_state.get('confidence_reasoning', '')),
                     'review_required': True
                 }) + "\n\n"
                 
@@ -289,6 +344,9 @@ async def run_orchestrator(request: OrchestratorRequest):
             if req_id in running_tasks:
                 del running_tasks[req_id]
                 print(f"🧹 Unregistered task {req_id}")
+            # Note: Do NOT delete from cumulative_usage_registry here
+            # It needs to persist across interrupt/resume cycles
+            # Only clean up on explicit cancel or after final completion
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -300,6 +358,12 @@ async def cancel_orchestrator(request_id: str):
     if request_id in running_tasks:
         task = running_tasks[request_id]
         task.cancel()
+        
+        # Cleanup cumulative usage registry
+        if request_id in cumulative_usage_registry:
+            del cumulative_usage_registry[request_id]
+            print(f"🧹 Cleaned up cumulative usage stats for {request_id}")
+        
         return {"status": "cancelled", "message": f"Task {request_id} has been requested to cancel."}
     
     return {"status": "not_found", "message": f"Task {request_id} not found."}
@@ -648,21 +712,42 @@ async def resume_run(run_id: str, request: ResumeValue):
                                 interrupt_ids.append(interrupt_obj.id)
                                 print(f"   - Found interrupt ID: {interrupt_obj.id}")
             
+            # Extract inner_thread_id from interrupt payload for state update
+            inner_thread_id = None
+            if graph_state.tasks:
+                for task in graph_state.tasks:
+                    if task.interrupts:
+                        for interrupt_obj in task.interrupts:
+                            # Get the interrupt value which contains inner_thread_id
+                            if hasattr(interrupt_obj, 'value') and isinstance(interrupt_obj.value, dict):
+                                inner_thread_id = interrupt_obj.value.get('inner_thread_id')
+                                if inner_thread_id:
+                                    print(f"   - Found inner_thread_id in interrupt: {inner_thread_id}")
+                                    break
+                    if inner_thread_id:
+                        break
+            
+            # Build state update dict - include inner_thread_id if found
+            state_update = {}
+            if inner_thread_id:
+                state_update["inner_thread_id"] = inner_thread_id
+                print(f"📌 Including inner_thread_id in resume update: {inner_thread_id}")
+            
             # If multiple interrupts exist, map the resume value to each interrupt ID
             if len(interrupt_ids) > 1:
                 print(f"🔀 Multiple interrupts detected ({len(interrupt_ids)}). Mapping resume value to all interrupt IDs.")
                 print(f"🔍 [Interrupt Debug] Interrupt IDs: {interrupt_ids}")
                 resume_payload = {iid: resume_value for iid in interrupt_ids}
-                resume_command = Command(resume=resume_payload)
+                resume_command = Command(resume=resume_payload, update=state_update) if state_update else Command(resume=resume_payload)
             elif len(interrupt_ids) == 1:
                 # Single interrupt - can use simple resume value
                 print(f"✅ Single interrupt detected. Using simple resume value.")
                 print(f"🔍 [Interrupt Debug] Interrupt ID: {interrupt_ids[0]}")
-                resume_command = Command(resume=resume_value)
+                resume_command = Command(resume=resume_value, update=state_update) if state_update else Command(resume=resume_value)
             else:
                 # No interrupts found - this shouldn't happen, but handle gracefully
                 print(f"⚠️ No interrupts found in graph state. Attempting simple resume.")
-                resume_command = Command(resume=resume_value)
+                resume_command = Command(resume=resume_value, update=state_update) if state_update else Command(resume=resume_value)
             
             # Remove from interrupt registry on resume
             if run_id in interrupt_registry:
@@ -678,6 +763,34 @@ async def resume_run(run_id: str, request: ResumeValue):
                     output = event.get("data", {}).get("output")
                     if output and isinstance(output, dict):
                         latest_state.update(output)
+                        
+                        # Accumulate usage stats from CostTracker (same as initial run)
+                        tracker = CostTracker.get_instance()
+                        real_stats = tracker.to_usage_stats(task_id=run_id)
+                        
+                        # Initialize if not exists
+                        if run_id not in cumulative_usage_registry:
+                            cumulative_usage_registry[run_id] = {
+                                "cost": 0.0,
+                                "input_tokens": 0,
+                                "output_tokens": 0,
+                                "llm_calls": 0,
+                                "tool_calls": 0,
+                                "steps": 0,
+                                "cached_tokens": 0
+                            }
+                        
+                        # Update cumulative totals
+                        cumulative_usage_registry[run_id]["cost"] = real_stats.get("cost", 0)
+                        cumulative_usage_registry[run_id]["input_tokens"] = real_stats.get("input_tokens", 0)
+                        cumulative_usage_registry[run_id]["output_tokens"] = real_stats.get("output_tokens", 0)
+                        cumulative_usage_registry[run_id]["llm_calls"] = real_stats.get("llm_calls", 0)
+                        cumulative_usage_registry[run_id]["tool_calls"] = real_stats.get("tool_calls", 0)
+                        cumulative_usage_registry[run_id]["steps"] = real_stats.get("steps", 0)
+                        cumulative_usage_registry[run_id]["cached_tokens"] = real_stats.get("cached_tokens", 0)
+                        
+                        # Emit cumulative stats
+                        yield f"data: {json.dumps({'type': 'usage_stats', 'stats': cumulative_usage_registry[run_id]})}\n\n"
 
                 if kind == "on_chain_start" and name in ["graph_executor", "synthesizer"]:
                     display_names = {
@@ -723,6 +836,13 @@ async def resume_run(run_id: str, request: ResumeValue):
                 all_agents = full_state.values.get("all_agents", [])
                 all_edges = full_state.values.get("all_edges", [])
                 
+                # CRITICAL FIX: Always emit cumulative usage stats from registry
+                # This ensures UI gets the total cost even if no new nodes executed
+                if run_id in cumulative_usage_registry:
+                    print(f"📊 Emitting final cumulative stats: ${cumulative_usage_registry[run_id]['cost']:.6f}")
+                    yield f"data: {json.dumps({'type': 'usage_stats', 'stats': cumulative_usage_registry[run_id]})}\n\n"
+                
+                
                 if all_agents:
                     print(f"📡 Emitting unified_graph: {len(all_agents)} agents")
                     yield f"data: {json.dumps({'type': 'unified_graph', 'agents': all_agents, 'edges': all_edges})}\n\n"
@@ -732,6 +852,12 @@ async def resume_run(run_id: str, request: ResumeValue):
                     yield f"data: {json.dumps({'type': 'synthesis', 'markdown': synthesis})}\n\n"
                     
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                
+                # Task completed successfully - cleanup cumulative registry
+                if run_id in cumulative_usage_registry:
+                    print(f"✅ Task {run_id} completed. Final cumulative cost: ${cumulative_usage_registry[run_id]['cost']:.6f}")
+                    # Keep the stats for a short time in case UI needs to re-fetch
+                    # Actual cleanup can happen in a background task or after a timeout
 
         except Exception as e:
             print(f"Error in resume_generator: {e}")
@@ -757,6 +883,11 @@ async def cancel_interrupt(run_id: str):
         
         if run_id in interrupt_registry:
             del interrupt_registry[run_id]
+        
+        # Also cleanup cumulative usage registry on abort
+        if run_id in cumulative_usage_registry:
+            del cumulative_usage_registry[run_id]
+            print(f"🧹 Cleaned up cumulative usage stats for aborted run {run_id}")
         
         from langgraph.types import Command
         abort_value = {"action": "abort", "reasoning": "Cancelled by user"}
