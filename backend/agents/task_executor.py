@@ -104,7 +104,17 @@ async def task_executor_node(state: dict, instruction: str, agent_type: str, con
     
     # Extract task_id early for consistent cost attribution across all LLM calls
     # Prefer root_task_id from state (for subgraph attribution), fall back to config thread_id
-    task_id = state.get("root_task_id") or (config.get("configurable", {}).get("thread_id") if config else None)
+    root_task_from_state = state.get("root_task_id")
+    config_thread_id = config.get("configurable", {}).get("thread_id") if config else None
+    task_id = root_task_from_state or config_thread_id
+    
+    # DEBUG: Log task_id source for cost attribution diagnosis
+    if root_task_from_state:
+        print(f"   💵 [CostDebug] Using root_task_id from state: {task_id[:8]}...")
+    elif config_thread_id:
+        print(f"   ⚠️ [CostDebug] root_task_id missing! Falling back to config thread_id: {config_thread_id[:8]}...")
+    else:
+        print(f"   ❌ [CostDebug] NO task_id available for cost attribution!")
     
     # Initialize usage_stats_update early to avoid UnboundLocalError
     usage_stats_update = {"cost": 0.0, "input_tokens": 0, "output_tokens": 0, "llm_calls": 0}
