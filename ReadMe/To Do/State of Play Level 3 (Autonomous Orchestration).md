@@ -1,4 +1,14 @@
-# State of Play: Level 3 (Autonomous Orchestration)
+# State of Play: Level 3 (Autonomous Orchestration) - RESOLVED
+
+> **UPDATE (2026-02-08):** The "Critical Deficiencies" listed below have been addressed.
+> - **Recursion Debt:** Native Subgraph (Epic 4.1) is implemented.
+> - **Persistence:** Postgres is now the default backend.
+>
+> This document is preserved for historical context. Implementation details are now in `ReadMe/system_architecture_status.md`.
+
+---
+
+# [ARCHIVED] State of Play: Level 3 (Autonomous Orchestration)
 The architecture demonstrates sophisticated **Dynamic Graph Generation** and **Recursive Agency**, moving beyond static chains (Level 2) into runtime adaptability. The implementation of "Time Travel" (State Hydration/Rewind) and "Zombie Pruning" indicates a high degree of control logic overlaying the stochastic nature of LLMs. However, the reliance on SQLite for a recursive, multi-threaded system suggests it is currently **Late Beta**, not yet Production-Ready for high-concurrency environments.
 
 # Critical Deficiencies (Red Flags)

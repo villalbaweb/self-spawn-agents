@@ -1,8 +1,8 @@
 # Self-Spawn Agents: System Architecture & Module Status
 
 **Date:** 2026-01-25
-**Overall Status:** Phase 2 Backend Logic Complete.
-**Current Focus:** Phase 2 UI/Optics (User Warning Badges & Cost Visualization).
+**Overall Status:** Phase 2 Complete (Backend & Optics).
+**Current Focus:** Phase 3: Stabilization & GTM Polish.
 
 ## Module Breakdown
 
@@ -64,7 +64,8 @@
     *   Tier 2 (Soft Warning): Internally logs `low_confidence_flag`. **UI badge Active.**
     *   Tier 3 (Hard Interrupt): Pauses execution on Critical failure.
     *   **Zombie Branch Pruning:** Active. Fails in one branch immediately auto-stop parallel siblings to save tokens.
-    *   **Budget Caps:** ✅ **Operational (100% Parity).** Graphs respect `max_cost` and `max_steps` configs. The backend now maintains perfect parity with global ledger records, even in recursive subgraphs.
+    *   **Budget Caps:** ✅ **Operational (100% Parity).** Graphs respect `max_cost` and `max_steps` configs.
+    *   **Persistence:** ✅ **Postgres (AsyncPostgresSaver).** Replaced SQLite for production readiness.
 
 ### Module 7: Blueprinting & Visualization
 *   **Status:** ✅ **Operational**
@@ -90,6 +91,10 @@
 ## Technical Summary
 The system acts as a **Recursive, Human-in-the-Loop Agentic Workflow Engine**.
 Phase 2 Backend Logic is now **COMPLETE**.
-- **Safety:** Atomic persistence, Zombie Pruning, and Budget caps are enforced in the core graph loop.
+- **Safety:** Atomic persistence (Postgres), Zombie Pruning, and Budget caps are enforced.
 - **Time Travel:** Users can Fork, Hydrate, and surgically Rewind execution threads.
-**Next Steps:** Implement the UI overlays (Modules 6 & 8 Visuals) to expose these powerful backend features to the end user.
+
+**Next Steps (Phase 3):**
+1.  **System Stress Testing:** Verify Postgres under load.
+2.  **UI Refinement:** Polish "Developer" UI for end-users.
+3.  **Deployment:** Finalize Docker configuration for production.
