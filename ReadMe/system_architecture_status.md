@@ -40,6 +40,7 @@
     *   **Smart complexity detection:** Heuristics + LLM classify task complexity via `should_decompose()`.
     *   **Mini-orchestration:** Complex tasks trigger `create_mini_plan()` → 2-4 parallel workers.
     *   **Recursive spawning:** Complex child tasks in mini-plan spawn their own subgraphs.
+    *   **Context Compression:** Automatically compresses results using density-aware summarization before returning to parent.
     *   **Multi-level hierarchy:** Supports depth 0 → 1 → 2 → 3 recursive decomposition.
     *   ~60-70% latency reduction per recursion level (2-6 LLM calls vs 5-8).
     *   Multi-level depth handling with inherited budget configs.

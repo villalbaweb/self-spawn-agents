@@ -24,9 +24,9 @@ This plan addresses the critical deficiencies and pending items identified acros
     *   **Action:** Integrate `KnowledgeStore` into `supervisor_agent.py`. Search for existing blueprints by hashing task intent before initiating new decomposition.
     *   **Derived from:** [State of Play Level 3 (Autonomous Orchestration).md](file:///d:/Git/self-spawn-agents/ReadMe/To%20Do/State%20of%20Play%20Level%203%20(Autonomous%20Orchestration).md#L28)
 
-- [ ] **5. Recursive Context Management (Reliability)**
+- [x] **5. Recursive Context Management (Reliability)**
     *   **Goal:** Prevent "Context Bloat" and token limit saturation at depth.
-    *   **Action:** Add a `summarize_execution` node to `worker_subgraph.py` return path. Create `backend/graph/prompts/summary_prompts.py` to drive density-aware result compression.
+    *   **Action:** Added `summarize_execution_node` to `recursive_executor.py` (Worker Subgraph). Created `backend/agents/result_summarizer.py` to drive density-aware result compression.
     *   **Derived from:** [State of Play Level 3 (High Fidelity Pilot).md](file:///d:/Git/self-spawn-agents/ReadMe/To%20Do/State%20of%20Play%20Level%203%20(High%20Fidelity%20Pilot).md#L35)
 
 - [x] **6. Context Engineering & Prompt Quality (Global)**
@@ -50,17 +50,17 @@ This plan addresses the critical deficiencies and pending items identified acros
 *   **Belongs to:** 3. Semantic Long-Term Memory & 4. Cross-Run Blueprint Caching.
 *   **Description:** Centralized interface for Vector DB interactions. Implements semantic search for existing blueprints and archiving of successful execution paths. Requires `text-embedding-3-small` for task intent vectorization.
 
-#### [NEW] [summary_prompts.py](file:///d:/Git/self-spawn-agents/backend/graph/prompts/summary_prompts.py)
+#### [NEW] [result_summarizer.py](file:///d:/Git/self-spawn-agents/backend/agents/result_summarizer.py)
 *   **Belongs to:** 5. Recursive Context Management.
-*   **Description:** XML-structured prompts for the "Technical Editor" persona. Defines compression rules to reduce raw tool outputs to dense, validated summaries before propagating to parent states.
+*   **Description:** Implements `summarize_result` agent and `CompressedResult` schema. Includes inline `RESULT_SUMMARY_PROMPT` for density-aware compression (Factory-Style).
 
 #### [MODIFY] [supervisor_agent.py](file:///d:/Git/self-spawn-agents/backend/agents/supervisor_agent.py)
 *   **Belongs to:** 4. Cross-Run Blueprint Caching (Optimization).
 *   **Description:** Injected logic to query `KnowledgeStore` during the planning phase. If a high-confidence blueprint match (>0.85 similarity) is found, the generation step is bypassed in favor of the cached topology.
 
-#### [MODIFY] [worker_subgraph.py](file:///d:/Git/self-spawn-agents/backend/agents/subgraphs/worker_subgraph.py)
+#### [MODIFY] [recursive_executor.py](file:///d:/Git/self-spawn-agents/backend/agents/recursive_executor.py)
 *   **Belongs to:** 5. Recursive Context Management.
-*   **Description:** Inject the `summarize_results` node as the mandatory exit point for all subgraphs. Ensures that the `results` key passed to the parent is always condensed.
+*   **Description:** Inject the `summarize_execution_node` as the mandatory exit point for the recursive graph. Ensures that results exceeding the token threshold are compressed before being returned to the parent.
 
 #### [MODIFY] All Agent Prompt Definitions
 *   **Belongs to:** 6. Context Engineering & Prompt Quality (Global).
