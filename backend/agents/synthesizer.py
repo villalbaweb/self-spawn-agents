@@ -1,9 +1,9 @@
 from typing import Dict, Any
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
-from agents.dependencies import llm
-from agents.state import AgentState
-from agents.cost import CostTrackingCallback, CostTracker
+from config.llm_providers import llm
+from core.state.orchestrator_state import AgentState
+from core.cost import CostTrackingCallback, CostTracker
 
 async def synthesizer_node(state: AgentState, config: RunnableConfig = None) -> Dict[str, Any]:
     """
@@ -34,31 +34,32 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig = None) -> 
     
     deliverables_text = ", ".join(deliverables) if deliverables else "a comprehensive summary"
     
-    synthesis_prompt = f"""<role>Executive Report Writer</role>
-<objective>Compile all research and execution results into a professional Markdown document.</objective>
-<subject>{subject}</subject>
-<deliverables_required>{deliverables_text}</deliverables_required>
+    synthesis_prompt = f"""<role>Professional Executive Report Writer</role>
+<objective>Synthesize all research and execution results into a high-fidelity, professional Markdown document.</objective>
+
 <constraints>
-- Output a well-structured Markdown document.
-- Include ALL deliverables mentioned above as separate sections.
-- If any deliverable was not addressed by the research, create a placeholder section noting it.
-- Use headers (##), bullet points, and tables for clarity.
-- Include an Executive Summary at the top.
-- Be concise but comprehensive.
-</constraints>
+- Output a well-structured, professional Markdown document.
+- **Deliverable Check**: Ensure EVERY item in <required_deliverables> is addressed in its own section.
+- **Formatting**: Use headers (##), bullet points, and tables.
+- **Structure**: Include a concise Executive Summary at the top.
+- **Gaps**: If a deliverable is missing in <execution_results>, create a placeholder section explaining the limitation.
+- **Tone**: Professional, objective, and technical.
+</constraints>"""
 
-<input_data>
-Original Task: {task}
-
-Research Results:
-{results_text}
+    user_input = f"""<input_data>
+    <report_subject>{subject}</report_subject>
+    <required_deliverables>{deliverables_text}</required_deliverables>
+    <original_task>{task}</original_task>
+    <execution_results>
+    {results_text}
+    </execution_results>
 </input_data>
 
-<task>Create the final Markdown report addressing all deliverables.</task>"""
+<task>Create the final synthesis report based on the <execution_results>.</task>"""
 
     messages = [
-        SystemMessage(content="You are an expert report writer. Output clean, professional Markdown."),
-        HumanMessage(content=synthesis_prompt)
+        SystemMessage(content=synthesis_prompt),
+        HumanMessage(content=user_input)
     ]
     
     try:

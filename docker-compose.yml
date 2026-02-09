@@ -28,6 +28,56 @@ services:
       - ./backend:/app
     env_file:
       - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # --- PostgreSQL Database ---
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: agent_forge_studio_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-agent_db}
+      POSTGRES_USER: ${POSTGRES_USER:-agent_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - npm_default
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agent_user} -d ${POSTGRES_DB:-agent_db}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # No port exposure in production - internal network only
+
+    # --- DbGate (Database Management UI) ---
+  dbgate:
+    image: dbgate/dbgate:latest
+    container_name: agent_forge_studio_dbgate
+    restart: unless-stopped
+    expose:
+      - "3000"
+    environment:
+      CONNECTIONS: postgres
+      LABEL_postgres: Agent Database
+      SERVER_postgres: postgres
+      USER_postgres: ${POSTGRES_USER:-agent_user}
+      PASSWORD_postgres: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      PORT_postgres: 5432
+      DATABASE_postgres: ${POSTGRES_DB:-agent_db}
+      ENGINE_postgres: postgres@dbgate-plugin-postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - npm_default
+    # No port exposure in production - access via NPM proxy
+
+volumes:
+  postgres_data:
+
 
 networks:
   npm_default:

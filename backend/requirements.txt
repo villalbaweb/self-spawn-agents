@@ -12,5 +12,7 @@ requests
 trafilatura
 httpx
 e2b-code-interpreter
-langgraph-checkpoint-sqlite
-aiosqlite<0.22.0
+langgraph-checkpoint-postgres
+psycopg[binary,pool]
+pgvector
+langchain-postgres

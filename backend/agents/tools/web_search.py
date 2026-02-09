@@ -1,5 +1,5 @@
 from langchain_core.tools import tool
-from agents.dependencies import search
+from config.llm_providers import search
 import re
 
 @tool

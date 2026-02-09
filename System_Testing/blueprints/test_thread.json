@@ -1,0 +1,1 @@
+{"run_id":"test_thread","task":"Create a hello world python script","agents":[{"id":"node1","role":"Coder","system_prompt":"[Pending Execution]","tools":[],"instruction":"Write hello world","parent":null}],"edges":[],"execution_flow":["node1"],"timestamp":"2026-02-01T22:27:34.922976","depth":0}

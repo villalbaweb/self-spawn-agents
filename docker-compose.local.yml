@@ -28,6 +28,56 @@ services:
       - ./backend:/app
     env_file:
       - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # --- PostgreSQL Database ---
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: agent_forge_studio_postgres_local
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: agent_db
+      POSTGRES_USER: agent_user
+      POSTGRES_PASSWORD: agent_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U agent_user -d agent_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - local_network
+
+  # --- DbGate (Database Management UI) ---
+  dbgate:
+    image: dbgate/dbgate:latest
+    container_name: agent_forge_studio_dbgate_local
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      CONNECTIONS: postgres
+      LABEL_postgres: Agent Database
+      SERVER_postgres: postgres
+      USER_postgres: agent_user
+      PASSWORD_postgres: agent_pass
+      PORT_postgres: 5432
+      DATABASE_postgres: agent_db
+      ENGINE_postgres: postgres@dbgate-plugin-postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - local_network
+
+volumes:
+  postgres_data:
+
 
 networks:
   local_network:
