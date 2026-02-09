@@ -14,14 +14,14 @@ This plan addresses the critical deficiencies and pending items identified acros
     *   **Action:** Migrated from SQLite to PostgreSQL with connection pooling (psycopg_pool) and standard LangGraph schema (`checkpoint_writes`). implemented in [checkpointer.py](file:///d:/Git/self-spawn-agents/backend/core/persistence/checkpointer.py) and [init_db.py](file:///d:/Git/self-spawn-agents/backend/database/init_db.py).
     *   **Derived from:** [GTM Viability Assessment.md](file:///d:/Git/self-spawn-agents/ReadMe/To%20Do/GTM%20Viability%20Assessment.md#L47)
 
-- [ ] **3. Semantic Long-Term Memory (Memory Tier)**
+- [x] **3. Semantic Long-Term Memory (Memory Tier)**
     *   **Goal:** Enable cross-run knowledge retrieval to reduce redundant compute.
-    *   **Action:** Implement `KnowledgeStore` class in `backend/core/knowledge.py` using a vector database (Pinecone/Weaviate). Support `search_blueprint` and `archive_blueprint` methods.
+    *   **Action:** Implemented `KnowledgeService` in `backend/core/knowledge/service.py` using **pgvector**. Supports semantic search and archival of execution patterns with HNSW indexing.
     *   **Derived from:** [State of Play Level 3 (High Fidelity Pilot).md](file:///d:/Git/self-spawn-agents/ReadMe/To%20Do/State%20of%20Play%20Level%203%20(High%20Fidelity%20Pilot).md#L39)
 
-- [ ] **4. Cross-Run Blueprint Caching (Optimization)**
+- [x] **4. Cross-Run Blueprint Caching (Optimization)**
     *   **Goal:** Reduce latency and cost by reusing successful graph topologies.
-    *   **Action:** Integrate `KnowledgeStore` into `supervisor_agent.py`. Search for existing blueprints by hashing task intent before initiating new decomposition.
+    *   **Action:** Integrated `BlueprintManager` node into the application graph. Uses semantic search to find existing blueprints (>0.85 similarity), bypassing the `ExecutionPlanner` (Supervisor) LLM call.
     *   **Derived from:** [State of Play Level 3 (Autonomous Orchestration).md](file:///d:/Git/self-spawn-agents/ReadMe/To%20Do/State%20of%20Play%20Level%203%20(Autonomous%20Orchestration).md#L28)
 
 - [x] **5. Recursive Context Management (Reliability)**
@@ -46,9 +46,9 @@ This plan addresses the critical deficiencies and pending items identified acros
 *   **Belongs to:** 2. Production Persistence (Infrastructure).
 *   **Description:** Implemented `AsyncPostgresSaver` with connection pooling to replace SQLite. Used official LangGraph `setup()` to initialize standard schema (checkpoints, checkpoint_writes). Ensures stable concurrency for parallel recursive nodes.
 
-#### [NEW] [knowledge.py](file:///d:/Git/self-spawn-agents/backend/core/knowledge.py)
+#### [NEW] [backend/core/knowledge/](file:///d:/Git/self-spawn-agents/backend/core/knowledge/)
 *   **Belongs to:** 3. Semantic Long-Term Memory & 4. Cross-Run Blueprint Caching.
-*   **Description:** Centralized interface for Vector DB interactions. Implements semantic search for existing blueprints and archiving of successful execution paths. Requires `text-embedding-3-small` for task intent vectorization.
+*   **Description:** Implemented `KnowledgeService` and migration scripts for **pgvector**. Handles semantic search for existing blueprints and archiving of successful execution paths. Uses `text-embedding-3-small` for task intent vectorization.
 
 #### [NEW] [result_summarizer.py](file:///d:/Git/self-spawn-agents/backend/agents/result_summarizer.py)
 *   **Belongs to:** 5. Recursive Context Management.

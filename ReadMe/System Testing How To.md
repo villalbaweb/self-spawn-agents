@@ -48,12 +48,15 @@ The test suite is divided into Unit and Integration tests.
 - **`test_depth_propagation.py`**: Ensures that metadata like `depth` and `root_task_id` are preserved when the `graph_compiler` spawns a dynamic graph.
 - **`test_forced_subgraph.py`**: Verifies that specific agent types (like `Sub-Orchestrator`) successfully trigger the sub-orchestration pipeline.
 - **`test_warnings.py`**: Tests the "Three-Tier Escalation Protocol" for budget limits and low confidence scores.
+- **`test_blueprint_manager.py`**: Tests the interaction between the `BlueprintManager` and state, confirming cache hits, misses, and conditional routing.
+- **`test_e2e_caching.py`**: End-to-end simulation of the blueprint caching flow (Archival → Recall → Skip Planning).
 
 ### Unit Tests
 - **`test_compiler.py`**: Unit tests for the `graph_compiler_node` logic.
 - **`test_cost_tracking.py`**: Verifies that the `CostTracker` accurately accumulates tokens and USD costs across different nodes.
 - **`test_nodes.py`**: Tests individual nodes (like `validate_node`) in total isolation with mock states.
 - **`test_postgres_persistence.py`**: Tests PostgreSQL checkpointer concurrency handling and connection pooling. Verifies that concurrent writes to the same thread_id complete without locking errors.
+- **`test_knowledge_service.py`**: Comprehensive unit tests for `KnowledgeService`, covering vector queries, HNSW indexing, and database error handling.
 
 ## ➕ Adding New Tests
 

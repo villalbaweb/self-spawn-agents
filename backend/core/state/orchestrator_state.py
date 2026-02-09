@@ -59,7 +59,11 @@ class AgentState(TypedDict):
     results: Annotated[Dict[str, str], operator.ior]
     depth: Annotated[int, replace]
     metadata: Annotated[Dict[str, Dict], operator.ior]
+    # Blueprint Caching and Knowledge
     blueprint_id: str
+    blueprint_cache_hit: bool
+    blueprint_similarity: float
+    blueprint_archived: bool
     # Aggregated data for unified graph rendering
     all_agents: Annotated[List[Dict], merge_lists]
     all_edges: Annotated[List[Dict], merge_lists]
