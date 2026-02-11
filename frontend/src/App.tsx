@@ -136,6 +136,7 @@ function App() {
         'target-arrow-color': '#a4b0be',
         'target-arrow-shape': 'triangle',
         'curve-style': 'bezier',
+        'control-point-step-size': 20, // Space parallel edges
         'arrow-scale': 0.8
       }
     },
@@ -148,7 +149,23 @@ function App() {
         'line-opacity': 0.8,
         'target-arrow-color': '#2ed573',
         'curve-style': 'bezier',
+        'control-point-step-size': 40,
         'arrow-scale': 1.0
+      }
+    },
+    {
+      selector: 'edge[type="return"]',
+      style: {
+        'line-style': 'dashed',
+        'width': 2,
+        'line-color': '#ff4757',
+        'line-opacity': 0.8,
+        'target-arrow-color': '#ff4757',
+        'target-arrow-shape': 'triangle',
+        'curve-style': 'bezier',
+        'control-point-step-size': 40,
+        'arrow-scale': 1.0,
+        'line-dash-pattern': [6, 3]
       }
     }
   ], []);
@@ -439,7 +456,10 @@ function App() {
     // AND Deduplicate edges (prevent multiple arrows between same agents)
     const seenEdges = new Set<string>();
     const validEdges = edges.filter((edge) => {
-      const uniqueKey = `${edge.source}|${edge.target}`;
+      // Include type in unique key to allow parallel edges of different types
+      const edgeType = (edge as any).type || 'plan';
+      const uniqueKey = `${edge.source}|${edge.target}|${edgeType}`;
+
       if (seenEdges.has(uniqueKey)) {
         return false;
       }
@@ -447,7 +467,6 @@ function App() {
       const sourceExists = validNodeIds.has(edge.source);
       const targetExists = validNodeIds.has(edge.target);
       if (!sourceExists || !targetExists) {
-        // console.warn(`Skipping edge: source=${edge.source} (${sourceExists ? 'exists' : 'missing'}), target=${edge.target} (${targetExists ? 'exists' : 'missing'})`);
         return false;
       }
 
@@ -459,7 +478,7 @@ function App() {
       data: {
         source: edge.source,
         target: edge.target,
-        type: (edge as any).type // hierarchy marker
+        type: (edge as any).type || 'plan' // hierarchy, return, or plan
       }
     }));
 

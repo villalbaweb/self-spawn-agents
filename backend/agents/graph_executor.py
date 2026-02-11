@@ -132,6 +132,11 @@ async def graph_executor_node(state: AgentState, config: RunnableConfig = None) 
                 try:
                     final_sub_state = await recursive_executor.ainvoke(sub_state, config=config)
                 except Exception as e:
+                    from langgraph.errors import GraphBubbleUp
+                    if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__:
+                        print(f"⏸️ [RecursiveNode] Subgraph '{_id}' interrupted, bubbling up...")
+                        raise e
+                        
                     print(f"❌ [RecursiveNode] RecursiveExecutor failed: {e}")
                     return {
                         "results": {_id: f"[Subgraph error: {str(e)}]"},
@@ -342,7 +347,7 @@ async def graph_executor_node(state: AgentState, config: RunnableConfig = None) 
                 if any(n["id"] == parent_id for n in nodes):
                     workflow.add_edge(parent_id, node_id)
                     nodes_with_parents.add(node_id)
-                    blueprint_edges.append(EdgeInfo(source=parent_id, target=node_id))
+                    blueprint_edges.append(EdgeInfo(source=parent_id, target=node_id, type="plan"))
         
     for node in nodes:
         if node["id"] not in nodes_with_parents:
@@ -438,14 +443,28 @@ async def graph_executor_node(state: AgentState, config: RunnableConfig = None) 
             confidence_score = 0.0
             confidence_reasoning = ""
             
-            # CRITICAL FIX: Process ALL interrupted agents, not just the first one
+            # CRITICAL FIX: Process ALL interrupted agents and edges, not just tier3_interrupts
             paused_nodes = list(inner_state.next) if inner_state.next else []
             if inner_interrupts:
                 for idx, i_list in enumerate(inner_interrupts):
                     for i in i_list:
                         val = i.value if hasattr(i, "value") else i
-                        if isinstance(val, dict) and val.get("type") == "tier3_interrupt":
-                            # Get the corresponding paused node ID for this interrupt
+                        if not isinstance(val, dict):
+                            continue
+
+                        # A. MERGE AGENTS/EDGES if present (from nested subgraphs)
+                        if val.get("all_agents"):
+                            for sub_agent in val["all_agents"]:
+                                if not any(a["id"] == sub_agent["id"] for a in agg_agents):
+                                    agg_agents.append(sub_agent)
+                        if val.get("all_edges"):
+                            for sub_edge in val["all_edges"]:
+                                # Shallow check for duplicate edges
+                                if not any(e.get("source") == sub_edge.get("source") and e.get("target") == sub_edge.get("target") for e in agg_edges):
+                                    agg_edges.append(sub_edge)
+
+                        # B. UPDATE PAUSED AGENT STATUS if it's a Tier 3 style interrupt
+                        if val.get("type") == "tier3_interrupt":
                             agent_id = paused_nodes[idx] if idx < len(paused_nodes) else val.get("agent_id", f"node_{idx+1}")
                             
                             # Use the first interrupt's confidence for the main interrupt event
@@ -536,10 +555,10 @@ async def graph_executor_node(state: AgentState, config: RunnableConfig = None) 
                 "all_agents": [],
                 "all_edges": [
                     # Dynamic edges
-                    {"source": e.source, "target": e.target, "depth": state.get("depth", 0)} for e in blueprint_edges
+                    {"source": e.source, "target": e.target, "depth": state.get("depth", 0), "type": "plan"} for e in blueprint_edges
                 ] + [
                     # Connect Supervisor to Roots (Nodes with no dependencies in the plan)
-                    {"source": "supervisor", "target": node["id"], "depth": state.get("depth", 0)}
+                    {"source": "supervisor", "target": node["id"], "depth": state.get("depth", 0), "type": "plan"}
                      for node in nodes if not node.get("dependencies")
                 ],
                 # Pass budget config and usage stats for enforcement

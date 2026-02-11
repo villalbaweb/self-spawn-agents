@@ -47,6 +47,9 @@ The test suite is divided into Unit and Integration tests.
 - **`test_worker_subgraph.py`**: Coverage for the recursive decomposition logic. It checks if complex tasks correctly spawn child subgraphs and respect recursion depth limits.
 - **`test_depth_propagation.py`**: Ensures that metadata like `depth` and `root_task_id` are preserved when the `graph_compiler` spawns a dynamic graph.
 - **`test_forced_subgraph.py`**: Verifies that specific agent types (like `Sub-Orchestrator`) successfully trigger the sub-orchestration pipeline.
+
+> [!TIP]
+> **Visualization Verification:** When testing recursive nodes, always assert that `all_agents` and `all_edges` are correctly aggregated from the child subgraph into the parent state. This is critical for maintaining frontend graph visual fidelity.
 - **`test_warnings.py`**: Tests the "Three-Tier Escalation Protocol" for budget limits and low confidence scores.
 - **`test_blueprint_manager.py`**: Tests the interaction between the `BlueprintManager` and state, confirming cache hits, misses, and conditional routing.
 - **`test_e2e_caching.py`**: End-to-end simulation of the blueprint caching flow (Archival → Recall → Skip Planning).

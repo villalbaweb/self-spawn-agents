@@ -21,6 +21,7 @@ class EdgeInfo(BaseModel):
     """Edge connection between nodes for visualization."""
     source: str = Field(..., description="Source node ID")
     target: str = Field(..., description="Target node ID")
+    type: Optional[str] = Field(None, description="Type of edge (e.g., plan, hierarchy, return)")
 
 
 class AppBlueprint(BaseModel):

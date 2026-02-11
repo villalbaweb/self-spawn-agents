@@ -98,6 +98,7 @@ The system is composed of several distinct modules, each responsible for a speci
     -   **Smart Complexity Detection:** Uses heuristics and LLM to decide if a task needs decomposition.
     -   **Mini-Orchestration:** Creates mini-plans for complex tasks (2-4 parallel workers).
     -   **Recursive Spawning:** Spawns child subgraphs for deeply nested tasks.
+    -   **Interrupt Propagation:** Explicitly bubbles up `GraphBubbleUp` and `Interrupt` exceptions from nested subgraphs to ensure root-level awareness and pausing.
     -   **Context Compression:** Automatically compresses results using density-aware summarization before returning to parent.
     -   **Direct Execution:** Handles simple tasks with minimal overhead.
 
@@ -168,11 +169,12 @@ class AgentState(TypedDict):
 Instead of spawning full orchestrators, the system uses lightweight "Native Worker Subgraphs".
 -   **Benefits:** Reduces latency (60-70%), lowers cost, and provides unified tracing.
 -   **Mechanism:** `should_decompose` checks task complexity. If complex, `create_mini_plan` generates parallel sub-workers.
+-   **Visualization & Metadata:** All nested subgraphs contribute `all_agents` and `all_edges` to the root state. This ensures complete visibility of the execution hierarchy (including return arrows) even if the system is interrupted at high depth.
 
 ### 5.2 Time Travel & Human-in-the-Loop
 -   **State Hydration:** Ability to clone past runs into new threads.
 -   **Surgical Rewind:** Invalidate specific nodes and replay from that point (Fork & Rewind).
--   **Interrupt Bubbling:** Inner graph pauses propagate to the root level.
+-   **Transparent Interrupt Bubbling:** Inner graph pauses propagate from arbitrary depths to the root level while preserving the full visual execution trace.
 
 ### 5.3 Safety Mechanisms
 -   **Zombie Pruning:** Prevents token waste by stopping parallel branches when a sibling fails.
