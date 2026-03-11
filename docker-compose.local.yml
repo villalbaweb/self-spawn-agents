@@ -5,11 +5,11 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - VITE_API_URL=http://localhost:8000
+        - VITE_API_URL=http://localhost:8001
     container_name: agent_forge_studio_frontend_local
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "8080:80"
     networks:
       - local_network
 
@@ -21,7 +21,7 @@ services:
     container_name: agent_forge_studio_backend_local
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8001:8000"
     networks:
       - local_network
     volumes:
@@ -42,7 +42,7 @@ services:
       POSTGRES_USER: agent_user
       POSTGRES_PASSWORD: agent_pass
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -59,7 +59,7 @@ services:
     container_name: agent_forge_studio_dbgate_local
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
       CONNECTIONS: postgres
       LABEL_postgres: Agent Database

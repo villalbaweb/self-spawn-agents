@@ -5,9 +5,14 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - VITE_API_URL=http://backend:8000
+        # Use a domain placeholder for production.
+        # This will be accessed by the user's browser, so it must be public.
+        - VITE_API_URL=${VITE_API_URL:-https://api.yourdomain.com}
     container_name: agent_forge_studio_frontend
     restart: unless-stopped
+    # Expose for reverse proxy
+    expose:
+      - "80"
     networks:
       - npm_default
 
@@ -18,14 +23,12 @@ services:
       dockerfile: Dockerfile
     container_name: agent_forge_studio_backend
     restart: unless-stopped
-    # We do NOT expose ports here using "8000:8000". 
-    # NPM will talk to this container internally on port 8000.
+    # No direct port exposure. Reverse proxy only.
     expose:
       - "8000"
     networks:
       - npm_default
-    volumes:
-      - ./backend:/app
+    # Volumes removed for production to ensure immutable images
     env_file:
       - .env
     depends_on:
@@ -50,9 +53,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    # No port exposure in production - internal network only
 
-    # --- DbGate (Database Management UI) ---
+  # --- DbGate (Database Management UI) ---
   dbgate:
     image: dbgate/dbgate:latest
     container_name: agent_forge_studio_dbgate
@@ -73,7 +75,6 @@ services:
         condition: service_healthy
     networks:
       - npm_default
-    # No port exposure in production - access via NPM proxy
 
 volumes:
   postgres_data:
