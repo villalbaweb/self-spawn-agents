@@ -5,6 +5,8 @@ from config.llm_providers import llm
 from core.state.orchestrator_state import AgentState
 from core.cost import CostTrackingCallback, CostTracker
 
+from agentguard_sdk.client import verify_with_governance, track_consumption
+
 async def synthesizer_node(state: AgentState, config: RunnableConfig = None) -> Dict[str, Any]:
     """
     Final synthesis node that compiles all results into a cohesive Markdown output.
@@ -14,26 +16,26 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig = None) -> 
     subject = state.get("subject", "")
     results = state.get("results", {})
     deliverables = state.get("deliverables", [])
-    
+
     print(f"📝 Synthesizing final output for: {subject}")
     print(f"📦 Required deliverables: {deliverables}")
-    
+
     # Cost tracking setup
     task_id = config.get("configurable", {}).get("thread_id") if config else None
     cost_callback = CostTrackingCallback(task_id=task_id, node_name="synthesizer")
     llm_config: RunnableConfig = {"callbacks": [cost_callback]}
-    
+
     # Build context from all results
     results_context = []
     for node_id, output in results.items():
         # Truncate long outputs
         truncated = output[:3000] + "..." if len(output) > 3000 else output
         results_context.append(f"## {node_id}\n{truncated}")
-    
+
     results_text = "\n\n".join(results_context)
-    
+
     deliverables_text = ", ".join(deliverables) if deliverables else "a comprehensive summary"
-    
+
     synthesis_prompt = f"""<role>Professional Executive Report Writer</role>
 <objective>Synthesize all research and execution results into a high-fidelity, professional Markdown document.</objective>
 
@@ -61,10 +63,10 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig = None) -> 
         SystemMessage(content=synthesis_prompt),
         HumanMessage(content=user_input)
     ]
-    
+
     try:
         response = await llm.ainvoke(messages, config=llm_config)
-        
+
         # Check for missing deliverables in the output (Fuzzy keyword check)
         output = response.content
         missing = []
@@ -79,19 +81,31 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig = None) -> 
             elif d.lower() not in output.lower():
                 # Fallback for very short deliverable strings
                 missing.append(d)
-        
+
         if missing:
             print(f"⚠️ Synthesis may be missing deliverables: {missing}")
             output += f"\n\n---\n### ⚠️ Note: The following deliverables may need additional work:\n" + "\n".join(f"- {m}" for m in missing)
-        
+
         # Record costs to global tracker
         tracker = CostTracker.get_instance()
         for record in cost_callback.records:
             tracker._add_record(record)
         print(f"💰 [synthesizer] Cost: ${cost_callback.get_total_cost():.6f}")
-        
+
+        # --- AGENTGUARD GOVERNANCE: Circuit Breaker ---
+        try:
+            print(f"⚡ [AgentGuard] Recording consumption for task {task_id}...")
+            await track_consumption(
+                run_id=task_id or "default-run",
+                cost=cost_callback.get_total_cost(),
+                steps=1,
+                depth=state.get("depth", 0)
+            )
+        except Exception as e:
+            print(f"⚠️ AgentGuard consumption tracking failed ({e}). Proceeding.")
+
         print("✅ Synthesis complete.")
-        
+
         # Add Synthesizer to visualization
         synthesizer_agent = {
             "id": "synthesizer",
@@ -103,15 +117,15 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig = None) -> 
             "status": "completed",
             "execution_time_seconds": 0.0
         }
-        
+
         # Connect all result producers to synthesizer
         synthesizer_edges = [
             {"source": node_id, "target": "synthesizer", "depth": state.get("depth", 0)}
             for node_id in results.keys()
         ]
-        
+
         return {
-            "synthesis": output, 
+            "synthesis": output,
             "usage_stats": cost_callback.to_usage_stats(),
             "all_agents": [synthesizer_agent],
             "all_edges": synthesizer_edges
