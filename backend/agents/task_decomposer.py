@@ -7,6 +7,8 @@ from config.llm_providers import llm
 from core.state.orchestrator_state import AgentState
 from core.cost import CostTrackingCallback, CostTracker
 
+from agentguard_sdk.client import verify_with_governance, track_consumption
+
 # Define the structured output model
 class SubtaskList(BaseModel):
     subject: str = Field(..., description="The primary subject/product mentioned in the task (e.g., 'luxury e-bikes', 'cooking blog')")
@@ -21,12 +23,27 @@ async def task_decomposer_node(state: AgentState, config: RunnableConfig = None)
     """
     task = state.get("task", "") or state.get("query", "")
     print(f"🧠 Decomposing: {task}")
-    
-    # Cost tracking setup
+
     task_id = config.get("configurable", {}).get("thread_id") if config else None
+
+    # --- AGENTGUARD GOVERNANCE: Semantic Firewall ---
+    try:
+        print(f"🛡️ [AgentGuard] Verifying intent for task_decomposer...")
+        verification = await verify_with_governance(
+            agent_id="task_decomposer",
+            input_text=task,
+            context={"task_id": task_id, "depth": state.get("depth", 0)}
+        )
+        if verification.get("outcome") == "BLOCK":
+            print(f"🛑 [AgentGuard] Blocked by Semantic Firewall: {verification.get('reason')}")
+            return {"subtasks": [], "subject": "", "deliverables": [], "usage_stats": {}}
+    except Exception as e:
+        print(f"⚠️ AgentGuard verification failed ({e}). Proceeding without firewall.")
+
+    # Cost tracking setup
     cost_callback = CostTrackingCallback(task_id=task_id, node_name="task_decomposer")
     llm_config: RunnableConfig = {"callbacks": [cost_callback]}
-    
+
     # Improved prompt with subject and deliverables extraction + search optimization
     sys_prompt = """<role>Expert Task Decomposer</role>
 <objective>Analyze the user's task to extract the primary subject, identify explicit deliverables, and decompose it into atomic, search-optimized subtasks.</objective>
@@ -63,16 +80,28 @@ async def task_decomposer_node(state: AgentState, config: RunnableConfig = None)
         response = await structured_llm.ainvoke(messages, config=llm_config)
         print(f"📌 Extracted Subject: {response.subject}")
         print(f"📦 Expected Deliverables: {response.deliverables}")
-        
+
         # Record costs to global tracker
         tracker = CostTracker.get_instance()
         for record in cost_callback.records:
             tracker._add_record(record)
         print(f"💰 [semantic_splitter] Cost: ${cost_callback.get_total_cost():.6f}")
-        
+
+        # --- AGENTGUARD GOVERNANCE: Circuit Breaker ---
+        try:
+            print(f"⚡ [AgentGuard] Recording consumption for task {task_id}...")
+            await track_consumption(
+                run_id=task_id or "default-run",
+                cost=cost_callback.get_total_cost(),
+                steps=1,
+                depth=state.get("depth", 0)
+            )
+        except Exception as e:
+            print(f"⚠️ AgentGuard consumption tracking failed ({e}). Proceeding.")
+
         return {
-            "subtasks": response.subtasks, 
-            "subject": response.subject, 
+            "subtasks": response.subtasks,
+            "subject": response.subject,
             "deliverables": response.deliverables,
             "root_task_id": task_id,
             "usage_stats": cost_callback.to_usage_stats()

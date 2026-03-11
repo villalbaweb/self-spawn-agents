@@ -6,6 +6,8 @@ from config.llm_providers import llm
 from core.state.orchestrator_state import AgentState
 from core.cost import CostTrackingCallback, CostTracker
 
+from agentguard_sdk.client import verify_with_governance, track_consumption
+
 # --- 1. Graph Schema Definition ---
 
 class NodeSchema(BaseModel):
@@ -27,15 +29,30 @@ async def execution_planner_node(state: AgentState, config: RunnableConfig = Non
     """
     subtasks = state.get("subtasks", [])
     task = state.get("task", "")
-    
+
     print(f"📋 Planning execution for {len(subtasks)} subtasks...")
 
     if not subtasks:
         print("⚠️ No subtasks found to plan.")
         return {"graph_plan": {}}
-    
-    # Cost tracking setup
+
     task_id = config.get("configurable", {}).get("thread_id") if config else None
+
+    # --- AGENTGUARD GOVERNANCE: Semantic Firewall ---
+    try:
+        print(f"🛡️ [AgentGuard] Verifying intent for execution_planner...")
+        verification = await verify_with_governance(
+            agent_id="execution_planner",
+            input_text="\n".join(subtasks),
+            context={"task_id": task_id, "depth": state.get("depth", 0)}
+        )
+        if verification.get("outcome") == "BLOCK":
+            print(f"🛑 [AgentGuard] Blocked by Semantic Firewall: {verification.get('reason')}")
+            return {"graph_plan": {}}
+    except Exception as e:
+        print(f"⚠️ AgentGuard verification failed ({e}). Proceeding without firewall.")
+
+    # Cost tracking setup
     cost_callback = CostTrackingCallback(task_id=task_id, node_name="execution_planner")
     llm_config: RunnableConfig = {"callbacks": [cost_callback]}
 
@@ -72,17 +89,29 @@ Available Agent Types:
         SystemMessage(content=sys_prompt),
         HumanMessage(content=f"<input_data>{user_content}</input_data>")
     ]
-    
+
     try:
         structured_llm = llm.with_structured_output(GraphPlan)
         plan: GraphPlan = await structured_llm.ainvoke(messages, config=llm_config)
-        
+
         # Record costs to global tracker
         tracker = CostTracker.get_instance()
         for record in cost_callback.records:
             tracker._add_record(record)
         print(f"💰 [supervisor] Cost: ${cost_callback.get_total_cost():.6f}")
-        
+
+        # --- AGENTGUARD GOVERNANCE: Circuit Breaker ---
+        try:
+            print(f"⚡ [AgentGuard] Recording consumption for task {task_id}...")
+            await track_consumption(
+                run_id=task_id or "default-run",
+                cost=cost_callback.get_total_cost(),
+                steps=1,
+                depth=state.get("depth", 0)
+            )
+        except Exception as e:
+            print(f"⚠️ AgentGuard consumption tracking failed ({e}). Proceeding.")
+
         # Add Supervisor to visualization
         supervisor_agent = {
             "id": "supervisor",
@@ -94,14 +123,14 @@ Available Agent Types:
             "status": "completed",
             "execution_time_seconds": 0.0 # Placeholder
         }
-        
+
         # Convert pydantic model to dict for state storage
         return {
             "graph_plan": plan.model_dump(),
             "usage_stats": cost_callback.to_usage_stats(),
             "all_agents": [supervisor_agent]
         }
-        
+
     except Exception as e:
         print(f"❌ Error in supervisor_node: {e}")
         return {"graph_plan": {}, "usage_stats": cost_callback.to_usage_stats()}
