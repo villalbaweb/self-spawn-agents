@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+print("🚀 [Backend] main.py loaded!")
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -16,7 +17,19 @@ import asyncio
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize resources on startup and clean up on shutdown."""
+    print("🚀 [Lifespan] Starting up...")
     await init_checkpointer()
+
+    # --- AGENTGUARD AUTHENTICATION ---
+    from agentguard_sdk.client import get_agentguard_client
+    print("🛡️ [Lifespan] Initiating connection to AgentGuard...")
+    ag_client = get_agentguard_client()
+    # Uses ADMIN_USERNAME and ADMIN_PASSWORD env vars, or defaults to admin/agentguard123
+    success = await ag_client.authenticate()
+    if success:
+        print("✅ [Lifespan] Successfully authenticated with AgentGuard!")
+    else:
+        print("❌ [Lifespan] Failed to authenticate with AgentGuard.")
     
     # Start interrupt cleanup background task (Recommendation #3)
     from config.settings import INTERRUPT_TIMEOUT_SECONDS
@@ -142,6 +155,7 @@ async def run_orchestrator(request: OrchestratorRequest):
     print(f"🆔 Request ID: {req_id}")
 
     async def event_generator():
+        print(f"🚀 [event_generator] Starting for {req_id}")
         # Register current task
         current_task = asyncio.current_task()
         if current_task:
@@ -151,6 +165,7 @@ async def run_orchestrator(request: OrchestratorRequest):
         try:
             # Emit start event with Run ID immediately
             yield f"data: {json.dumps({'type': 'start', 'run_id': req_id})}\n\n"
+            print(f"📡 [event_generator] Yielded start event for {req_id}")
 
             initial_state = {
                 "task": request.task, 
@@ -177,6 +192,7 @@ async def run_orchestrator(request: OrchestratorRequest):
             async for event in app_graph.astream_events(initial_state, config=config, version="v2"):
                 kind = event.get("event")
                 name = event.get("name")
+                print(f"DEBUG: Processing event: {kind} {name}")
                 
                 # Update latest_state on every end event that carries state
                 if kind in ["on_chain_end", "on_node_end"]:

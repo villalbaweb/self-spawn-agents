@@ -9,8 +9,8 @@ from concurrent.futures import Future
 
 # Late import to prevent circular dependency issues during SDK load
 from .client import (
-    verify_with_governance,
-    track_thought_telemetry,
+    verify_with_governance, 
+    track_thought_telemetry, 
     track_consumption,
     get_agentguard_client
 )
@@ -35,12 +35,12 @@ def protected_tool(
 ):
     """
     Production-ready decorator for standalone tools (CrewAI, AutoGen, custom functions).
-
+    
     Provides:
     1. Semantic Firewall (verify_action)
     2. Circuit Breaker (record_consumption)
     3. Audit Telemetry (track_thought)
-
+    
     Supports both sync and async functions.
     """
     def decorator(func):
@@ -50,26 +50,26 @@ def protected_tool(
             node_name = func.__name__
             full_agent_id = f"{agent_id}.{node_name}"
             input_text = _get_input_from_args(args, kwargs)
-
+            
             # 1. PRE-EXECUTION: Semantic Firewall
             print(f"🛡️ [AgentGuard] Protecting tool '{node_name}'...")
-
+            
             # Attempt to extract run_id/task_id from kwargs if present (common in agents)
             run_id = kwargs.get("run_id") or kwargs.get("task_id") or "standalone-tool-run"
-
+            
             context = {
                 "node": node_name,
                 "risk_level": risk_level,
                 "policy_id": policy_id,
                 "run_id": run_id
             }
-
+            
             decision = await verify_with_governance(
                 agent_id=full_agent_id,
                 input_text=input_text,
                 context=context
             )
-
+            
             if decision.get("outcome") == "BLOCK":
                 print(f"🚫 [AgentGuard] BLOCKED Tool Execution: {decision.get('reason')}")
                 return {"outcome": "BLOCK", "reason": decision.get("reason"), "run_id": run_id}
@@ -79,7 +79,7 @@ def protected_tool(
         @functools.wraps(func)
         async def async_wrapper(*args, **kwargs):
             node_name = func.__name__
-
+            
             # 1. PRE-EXECUTION
             governance_result = await _run_governance_logic(*args, **kwargs)
             if governance_result["outcome"] == "BLOCK":
@@ -94,16 +94,16 @@ def protected_tool(
             try:
                 result = await func(*args, **kwargs)
                 duration_ms = (time.time() - start_time) * 1000
-
+                
                 # 3. POST-EXECUTION: Telemetry & Consumption
                 # We do this as fire-and-forget to avoid blocking tool return
                 asyncio.create_task(track_thought_telemetry(run_id, node_name, str(result)))
                 if cost_per_call > 0:
                     asyncio.create_task(track_consumption(run_id=run_id, cost=cost_per_call))
-
+                
                 print(f"🔧 [AgentGuard] Tool '{node_name}' Finished ({duration_ms:.2f}ms).")
                 return result
-
+                
             except Exception as e:
                 print(f"❌ [AgentGuard] Tool '{node_name}' Failed: {e}")
                 raise
@@ -111,7 +111,7 @@ def protected_tool(
         @functools.wraps(func)
         def sync_wrapper(*args, **kwargs):
             node_name = func.__name__
-
+            
             def run_async_in_new_loop(coro):
                 """Runs a coroutine in a completely fresh event loop in a new thread."""
                 result_future = Future()
@@ -133,7 +133,7 @@ def protected_tool(
 
             # 1. PRE-EXECUTION
             governance_result = run_async_in_new_loop(_run_governance_logic(*args, **kwargs))
-
+            
             if governance_result["outcome"] == "BLOCK":
                 if enforce:
                     raise PermissionError(f"AgentGuard Policy Violation: {governance_result.get('reason')}")
@@ -146,7 +146,7 @@ def protected_tool(
             try:
                 result = func(*args, **kwargs)
                 duration_ms = (time.time() - start_time) * 1000
-
+                
                 # 3. POST-EXECUTION: Telemetry & Consumption (Fire and forget)
                 def track_telemetry_bg():
                     run_async_in_new_loop(track_thought_telemetry(run_id, node_name, str(result)))
@@ -154,10 +154,10 @@ def protected_tool(
                         run_async_in_new_loop(track_consumption(run_id=run_id, cost=cost_per_call))
 
                 threading.Thread(target=track_telemetry_bg, daemon=True).start()
-
+                
                 print(f"🔧 [AgentGuard] Tool '{node_name}' Finished ({duration_ms:.2f}ms).")
                 return result
-
+                
             except Exception as e:
                 print(f"❌ [AgentGuard] Tool '{node_name}' Failed: {e}")
                 raise
@@ -174,7 +174,7 @@ def monitor_tool(func):
     return protected_tool(enforce=False)(func)
 
 def langgraph_node_guard(
-    agent_id_prefix: str = "agent",
+    agent_id_prefix: str = "agent", 
     extract_input: Optional[Callable[[Dict], str]] = None,
     depth_increment: int = 0
 ):
@@ -195,7 +195,7 @@ def langgraph_node_guard(
             return str(state["original_query"])
         if "prompt" in state and state["prompt"]:
             return str(state["prompt"])
-
+        
         # If we must use the whole state, try to exclude known dynamic fields
         clean_state = {k: v for k, v in state.items() if k not in ["task_id", "workflow_trace_id", "governance_decisions", "thought_records", "accumulated_cost"]}
         return str(clean_state)
@@ -208,7 +208,7 @@ def langgraph_node_guard(
             node_name = func.__name__
             agent_id = f"{agent_id_prefix}-{node_name}"
             input_text = extractor(state)
-
+            
             # --- 🚀 STICKY HINT INJECTION ---
             # If we have a persistent hint from a previous rescue, we force it!
             if state.get("sticky_human_hint"):
@@ -218,7 +218,7 @@ def langgraph_node_guard(
                 for key in greedy_keys:
                     if key in state and isinstance(state[key], str) and "PRIORITY HUMAN FEEDBACK" not in state[key]:
                         state[key] = f"### PRIORITY HUMAN FEEDBACK (Persistent): {hint}\n\nSTRICT INSTRUCTION: {state[key]}"
-
+                
                 if "messages" in state and isinstance(state["messages"], list):
                     from langchain_core.messages import SystemMessage
                     # Check if we already injected this exact hint
@@ -227,7 +227,7 @@ def langgraph_node_guard(
 
             # 1. Verification Phase
             print(f"🛡️ [AgentGuard] Verifying node '{node_name}' intent...")
-
+            
             # Check for ANY pending CLI interjections (Asynchronous Nudge)
             has_new_hint = False
             import redis
@@ -245,10 +245,10 @@ def langgraph_node_guard(
                         state["human_interjections"].append(hint)
                         print(f"🟢 [AgentGuard] ASYNC Human hint received: {hint}")
                         has_new_hint = True
-
+                        
                         # Make it STICKY
                         state["sticky_human_hint"] = hint
-
+                        
                         # Reset history
                         try:
                             client = get_agentguard_client()
@@ -258,7 +258,7 @@ def langgraph_node_guard(
                 pass
 
             if has_new_hint:
-                # If we just received a human override, we ALLOW this step
+                # If we just received a human override, we ALLOW this step 
                 # so the agent logic can actually process the hint.
                 decision = {
                     "outcome": "ALLOW",
@@ -274,7 +274,7 @@ def langgraph_node_guard(
                     "max_cost": state.get("max_cost"),
                     "max_depth": state.get("max_depth")
                 }
-
+                
                 decision = await verify_with_governance(
                     agent_id=agent_id,
                     input_text=input_text,
@@ -298,15 +298,15 @@ def langgraph_node_guard(
                             if data.get("type") == "INTERJECT":
                                 hint = data.get("content")
                                 chosen_outcome = data.get("outcome", "CONTINUE").upper()
-
+                                
                                 if "human_interjections" not in state:
                                     state["human_interjections"] = []
                                 state["human_interjections"].append(hint)
                                 print(f"🟢 [AgentGuard] Human hint received: RESUMING EXECUTION (Outcome: {chosen_outcome})")
-
+                                
                                 # Make it STICKY
                                 state["sticky_human_hint"] = hint
-
+                                
                                 # History Reset
                                 try:
                                     client = get_agentguard_client()
@@ -314,7 +314,7 @@ def langgraph_node_guard(
                                 except Exception: pass
 
                                 # --- 🚀 ENFORCEMENT OF 3 STATES ---
-
+                                
                                 if chosen_outcome == "ABORT":
                                     print(f"🛑 [AgentGuard] User aborted the run.")
                                     if "workflow_status" in state: state["workflow_status"] = "blocked"
@@ -325,7 +325,7 @@ def langgraph_node_guard(
                                 if chosen_outcome == "OVERRIDE":
                                     print(f"🛡️ [AgentGuard] USER OVERRIDE: Forcing ALLOW for this step.")
                                     # We bypass logic and return ALLOWED
-                                    # If it's a LangGraph node, we might want to continue execution
+                                    # If it's a LangGraph node, we might want to continue execution 
                                     # but skip the firewall for JUST THIS STEP.
                                     # Let's proceed to func execution but mark as ALLOWED.
                                     decision = {"outcome": "ALLOW", "reason": f"Human Override: {hint}", "decision_id": "human-override"}
@@ -346,7 +346,7 @@ def langgraph_node_guard(
                                 for key in greedy_keys:
                                     if key in state and isinstance(state[key], str):
                                         state[key] = f"### PRIORITY HUMAN FEEDBACK: {hint}\n\nSTRICT INSTRUCTION: {state[key]}"
-
+                                
                                 break
                         await asyncio.sleep(1)
                 except Exception as e:
@@ -369,16 +369,16 @@ def langgraph_node_guard(
                 if "workflow_status" in state:
                     state["workflow_status"] = "blocked"
                 return state
-
+            
             # Update depth
             if "current_depth" in state:
                 state["current_depth"] += depth_increment
-
+            
             # 2. Execution Phase
             start_time = time.time()
             result = await func(state, *args, **kwargs)
             duration_ms = (time.time() - start_time) * 1000
-
+            
             # 3. Thought Tracking (Automated if result has content)
             if "task_id" in state:
                 # Try to extract the core response to track it as a thought
@@ -387,7 +387,7 @@ def langgraph_node_guard(
                     if "analysis_results" in result: thought_text = result["analysis_results"]
                     elif "draft_content" in result: thought_text = result["draft_content"]
                     elif "research_results" in result and result["research_results"]: thought_text = result["research_results"][-1]
-
+                
                 if thought_text:
                     await track_thought_telemetry(state["task_id"], node_name, str(thought_text))
 

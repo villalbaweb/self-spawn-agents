@@ -6,7 +6,7 @@ class AgentGuardClient:
     """
     Standalone client for AgentGuard governance APIs.
     """
-
+    
     def __init__(
         self,
         base_url: Optional[str] = None,
@@ -16,8 +16,34 @@ class AgentGuardClient:
         self.base_url = (base_url or os.getenv("AGENTGUARD_URL", "http://localhost:8000")).rstrip("/")
         self.timeout = timeout
         self.headers = {"Content-Type": "application/json"}
+        self.token = None
+        
+        # Legacy API Key support
         if api_key or os.getenv("AGENTGUARD_API_KEY"):
             self.headers["Authorization"] = f"Bearer {api_key or os.getenv('AGENTGUARD_API_KEY')}"
+    
+    async def authenticate(self, username: Optional[str] = None, password: Optional[str] = None) -> bool:
+        """
+        Authenticates with the AgentGuard API and stores the access token.
+        """
+        user = username or os.getenv("ADMIN_USERNAME", "admin")
+        pwd = password or os.getenv("ADMIN_PASSWORD", "agentguard123")
+        
+        url = f"{self.base_url}/api/auth/token"
+        # OAuth2PasswordRequestForm expects form-data
+        data = {"username": user, "password": pwd}
+        
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(url, data=data)
+                response.raise_for_status()
+                token_data = response.json()
+                self.token = token_data["access_token"]
+                self.headers["Authorization"] = f"Bearer {self.token}"
+                return True
+        except Exception as e:
+            print(f"⚠️ [AgentGuard SDK] Authentication failed: {e}")
+            return False
 
     async def verify(
         self,
@@ -43,7 +69,7 @@ class AgentGuardClient:
                 "reason": "AgentGuard service unreachable - failing open",
                 "decision_id": "fallback-allow"
             }
-
+    
     async def consume(
         self,
         run_id: str,
@@ -76,7 +102,7 @@ class AgentGuardClient:
         except httpx.RequestError as exc:
             print(f"⚠️ Error connecting to AgentGuard at {url}: {exc}")
             return {"status": "ALLOWED", "reason": "AgentGuard unreachable", "usage": {}}
-
+    
     async def track_thought(
         self,
         run_id: str,
@@ -136,9 +162,9 @@ async def verify_with_governance(
     return await client.verify(agent_id, input_text, context)
 
 async def track_consumption(
-    run_id: str,
-    cost: float,
-    steps: int = 1,
+    run_id: str, 
+    cost: float, 
+    steps: int = 1, 
     depth: int = 0,
     max_cost: Optional[float] = None,
     max_depth: Optional[int] = None
@@ -152,3 +178,4 @@ async def track_thought_telemetry(
 ) -> Dict[str, Any]:
     client = get_agentguard_client()
     return await client.track_thought(run_id, node_name, text)
+

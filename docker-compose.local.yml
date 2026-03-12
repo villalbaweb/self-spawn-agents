@@ -24,16 +24,17 @@ services:
       - "8001:8000"
     networks:
       - local_network
+      - agent_guard_network
     volumes:
       - ./backend:/app
     env_file:
       - .env
     depends_on:
-      postgres:
+      postgres_selfspawn:
         condition: service_healthy
 
   # --- PostgreSQL Database ---
-  postgres:
+  postgres_selfspawn:
     image: pgvector/pgvector:pg16
     container_name: agent_forge_studio_postgres_local
     restart: unless-stopped
@@ -61,16 +62,16 @@ services:
     ports:
       - "3001:3000"
     environment:
-      CONNECTIONS: postgres
+      CONNECTIONS: postgres_selfspawn
       LABEL_postgres: Agent Database
-      SERVER_postgres: postgres
+      SERVER_postgres: postgres_selfspawn
       USER_postgres: agent_user
       PASSWORD_postgres: agent_pass
       PORT_postgres: 5432
       DATABASE_postgres: agent_db
       ENGINE_postgres: postgres@dbgate-plugin-postgres
     depends_on:
-      postgres:
+      postgres_selfspawn:
         condition: service_healthy
     networks:
       - local_network
@@ -82,3 +83,6 @@ volumes:
 networks:
   local_network:
     driver: bridge
+  agent_guard_network:
+    external: true
+    name: agent-control-plane_local_network

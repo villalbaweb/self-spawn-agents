@@ -72,9 +72,11 @@ async def init_checkpointer():
         # Open the pool
         await _connection_pool.open()
         
-        # Create checkpointer with pool
-        _context_manager = AsyncPostgresSaver.from_conn_string(DATABASE_URL)
-        _checkpointer = await _context_manager.__aenter__()
+        # Create checkpointer with the pool instead of a new connection string
+        _checkpointer = AsyncPostgresSaver(_connection_pool)
+        
+        # setup() is handled by init_db.py, but we can call it here too if needed
+        # await _checkpointer.setup()
         
         print(f"✅ PostgreSQL checkpointer initialized")
         print(f"   Connection pool: 2-10 connections")
@@ -91,11 +93,7 @@ async def close_checkpointer():
     
     Call this on app shutdown.
     """
-    global _context_manager, _connection_pool
-    
-    if _context_manager:
-        await _context_manager.__aexit__(None, None, None)
-        print("🔒 Checkpointer connection closed.")
+    global _connection_pool
     
     if _connection_pool:
         await _connection_pool.close()

@@ -9,7 +9,7 @@ class AgentGuardCallbackHandler(AsyncCallbackHandler):
     """
     Hooks into LangChain/LangGraph to provide telemetry and observability.
     """
-
+    
     def __init__(self, run_id: str = "default_run"):
         super().__init__()
         self.run_id = run_id
