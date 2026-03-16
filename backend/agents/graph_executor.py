@@ -133,8 +133,9 @@ async def graph_executor_node(state: AgentState, config: RunnableConfig = None) 
                     final_sub_state = await recursive_executor.ainvoke(sub_state, config=config)
                 except Exception as e:
                     from langgraph.errors import GraphBubbleUp
-                    if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__:
-                        print(f"⏸️ [RecursiveNode] Subgraph '{_id}' interrupted, bubbling up...")
+                    from utils.governance_utils import is_governance_block
+                    if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__ or is_governance_block(e):
+                        print(f"⏸️ [RecursiveNode] Subgraph '{_id}' interrupted or blocked, bubbling up...")
                         raise e
                         
                     print(f"❌ [RecursiveNode] RecursiveExecutor failed: {e}")
@@ -535,8 +536,10 @@ async def graph_executor_node(state: AgentState, config: RunnableConfig = None) 
                 await app.ainvoke(Command(resume=resume_payload), config=inner_config)
             except Exception as e:
                 from langgraph.errors import GraphBubbleUp
-                if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__:
-                    print(f"⏸️ Inner graph raised Interrupt during resumed execution.")
+                from utils.governance_utils import is_governance_block
+                if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__ or is_governance_block(e):
+                    print(f"⏸️ Inner graph raised Interrupt or Block during resumed execution.")
+                    raise e
                 else:
                     raise e
             
@@ -573,8 +576,10 @@ async def graph_executor_node(state: AgentState, config: RunnableConfig = None) 
                 await app.ainvoke(initial_dynamic_state, config=inner_config)
             except Exception as e:
                 from langgraph.errors import GraphBubbleUp
-                if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__:
-                    print(f"⏸️ Inner graph raised Initial Interrupt.")
+                from utils.governance_utils import is_governance_block
+                if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__ or is_governance_block(e):
+                    print(f"⏸️ Inner graph raised Initial Interrupt or Block.")
+                    raise e
                 else:
                     raise e
             

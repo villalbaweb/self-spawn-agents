@@ -129,6 +129,9 @@ async def create_mini_plan(task: str, subject: str, root_task_id: str = None, co
         return plan, cost_callback.to_usage_stats()
         
     except Exception as e:
+        from utils.governance_utils import is_governance_block
+        if is_governance_block(e):
+            raise e
         print(f"⚠️ [MiniPlanner] Failed to create plan: {e}")
         usage = cost_callback.to_usage_stats() if 'cost_callback' in locals() else {}
         # Fallback: single research task
@@ -295,8 +298,9 @@ async def execute_mini_plan(
         except Exception as e:
             # CRITICAL FIX: Re-raise LangGraph interrupt exceptions so they bubble up properly
             from langgraph.errors import GraphBubbleUp
-            if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__:
-                print(f"⏸️ [execute_mini_plan] Interrupt detected in task {mini_task.id}, bubbling up: {type(e).__name__}")
+            from utils.governance_utils import is_governance_block
+            if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__ or is_governance_block(e):
+                print(f"⏸️ [execute_mini_plan] Interrupt or Block detected in task {mini_task.id}, bubbling up: {type(e).__name__}")
                 raise  # Re-raise to propagate interrupt
             
             return {
@@ -428,6 +432,9 @@ async def should_decompose(task: str, config: RunnableConfig = None, root_task_i
         return classification.needs_decomposition, cost_callback.to_usage_stats()
         
     except Exception as e:
+        from utils.governance_utils import is_governance_block
+        if is_governance_block(e):
+            raise e
         print(f"   [should_decompose] Classifier failed: {e}, falling back to SINGLE")
         return False, {}
 
@@ -613,8 +620,9 @@ async def execute_node(state: WorkerState, config: RunnableConfig = None) -> Dic
             # CRITICAL FIX: Re-raise LangGraph interrupt exceptions so they bubble up properly
             # to the outer graph instead of being caught as errors
             from langgraph.errors import GraphBubbleUp
-            if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__:
-                print(f"⏸️ [WorkerSubgraph] Interrupt detected, bubbling up: {type(e).__name__}")
+            from utils.governance_utils import is_governance_block
+            if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__ or is_governance_block(e):
+                print(f"⏸️ [WorkerSubgraph] Interrupt or Block detected, bubbling up: {type(e).__name__}")
                 raise  # Re-raise to let it propagate
             
             print(f"❌ [WorkerSubgraph] Execution error: {e}")
@@ -658,6 +666,9 @@ async def validate_node(state: WorkerState, config: RunnableConfig = None) -> Di
             "usage_stats": val_usage
         }
     except Exception as e:
+        from utils.governance_utils import is_governance_block
+        if is_governance_block(e):
+            raise e
         print(f"⚠️ [WorkerSubgraph] Validation error: {e}")
         return {"confidence_score": 0.5, "confidence_reasoning": f"Validation failed: {e}"}
 

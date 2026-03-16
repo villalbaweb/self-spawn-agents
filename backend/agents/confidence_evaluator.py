@@ -121,5 +121,8 @@ Analyze the <candidate_output> against the <user_instruction> and produce the JS
             "confidence_reasoning": reasoning
         }, cost_callback.to_usage_stats()
     except Exception as e:
+        from utils.governance_utils import is_governance_block
+        if is_governance_block(e):
+            raise e
         print(f"⚠️ Confidence evaluation failed: {e}")
         return {"confidence_score": 0.5, "confidence_reasoning": f"Evaluation error: {str(e)}"}, {}

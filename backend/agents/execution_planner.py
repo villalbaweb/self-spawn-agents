@@ -39,18 +39,12 @@ async def execution_planner_node(state: AgentState, config: RunnableConfig = Non
     task_id = config.get("configurable", {}).get("thread_id") if config else None
 
     # --- AGENTGUARD GOVERNANCE: Semantic Firewall ---
-    try:
-        print(f"🛡️ [AgentGuard] Verifying intent for execution_planner...")
-        verification = await verify_with_governance(
-            agent_id="execution_planner",
-            input_text="\n".join(subtasks),
-            context={"task_id": task_id, "depth": state.get("depth", 0)}
-        )
-        if verification.get("outcome") == "BLOCK":
-            print(f"🛑 [AgentGuard] Blocked by Semantic Firewall: {verification.get('reason')}")
-            return {"graph_plan": {}}
-    except Exception as e:
-        print(f"⚠️ AgentGuard verification failed ({e}). Proceeding without firewall.")
+    # Proactively verify intent. The SDK now raises GovernanceException natively on BLOCK.
+    await verify_with_governance(
+        agent_id="execution_planner",
+        input_text="\n".join(subtasks),
+        context={"task_id": task_id, "depth": state.get("depth", 0)}
+    )
 
     # Cost tracking setup
     cost_callback = CostTrackingCallback(task_id=task_id, node_name="execution_planner")
@@ -132,5 +126,9 @@ Available Agent Types:
         }
 
     except Exception as e:
+        # Re-raise GovernanceException (or wrapped version) for hard stop
+        from utils.governance_utils import is_governance_block
+        if is_governance_block(e):
+            raise e
         print(f"❌ Error in supervisor_node: {e}")
         return {"graph_plan": {}, "usage_stats": cost_callback.to_usage_stats()}

@@ -126,29 +126,18 @@ async def task_executor_node(state: dict, instruction: str, agent_type: str, con
         current_depth = state.get("depth", 0)
 
         # --- AGENTGUARD GOVERNANCE: Semantic Firewall ---
-        print(f"🛡️ [AgentGuard] Verifying intent for {agent_type}...")
-        verification = await verify_with_governance(
+        # Proactively verify intent. The SDK now raises GovernanceException natively on BLOCK.
+        await verify_with_governance(
             agent_id=agent_type,
             input_text=instruction,
             context={"task_id": task_id, "depth": current_depth}
         )
-        if verification.get("outcome") == "BLOCK":
-            print(f"🛑 [AgentGuard] Blocked by Semantic Firewall: {verification.get('reason')}")
-            return {
-                "output": f"[BLOCKED BY AGENTGUARD] {verification.get('reason')}",
-                "usage_stats": usage_stats_update,
-                "metadata": {
-                    "agent_role": agent_type,
-                    "status": "blocked",
-                    "error_message": verification.get("reason"),
-                    "confidence_score": 0.0
-                }
-            }
 
     except Exception as e:
         # Check if it's any kind of LangGraph interrupt (which shouldn't be caught)
         from langgraph.errors import GraphBubbleUp
-        if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__:
+        from utils.governance_utils import is_governance_block
+        if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__ or is_governance_block(e):
             raise e
         print(f"⚠️ AgentGuard verification failed ({e}). Proceeding without firewall.")
 
@@ -416,7 +405,8 @@ async def task_executor_node(state: dict, instruction: str, agent_type: str, con
     except (Exception) as e:
         # Check if it's any kind of LangGraph interrupt (which shouldn't be caught)
         from langgraph.errors import GraphBubbleUp
-        if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__:
+        from utils.governance_utils import is_governance_block
+        if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__ or is_governance_block(e):
             raise e
 
         execution_time = time.time() - start_time if 'start_time' in locals() else 0

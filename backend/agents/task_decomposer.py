@@ -27,18 +27,12 @@ async def task_decomposer_node(state: AgentState, config: RunnableConfig = None)
     task_id = config.get("configurable", {}).get("thread_id") if config else None
 
     # --- AGENTGUARD GOVERNANCE: Semantic Firewall ---
-    try:
-        print(f"🛡️ [AgentGuard] Verifying intent for task_decomposer...")
-        verification = await verify_with_governance(
-            agent_id="task_decomposer",
-            input_text=task,
-            context={"task_id": task_id, "depth": state.get("depth", 0)}
-        )
-        if verification.get("outcome") == "BLOCK":
-            print(f"🛑 [AgentGuard] Blocked by Semantic Firewall: {verification.get('reason')}")
-            return {"subtasks": [], "subject": "", "deliverables": [], "usage_stats": {}}
-    except Exception as e:
-        print(f"⚠️ AgentGuard verification failed ({e}). Proceeding without firewall.")
+    # Proactively verify intent. The SDK now raises GovernanceException natively on BLOCK.
+    await verify_with_governance(
+        agent_id="task_decomposer",
+        input_text=task,
+        context={"task_id": task_id, "depth": state.get("depth", 0)}
+    )
 
     # Cost tracking setup
     cost_callback = CostTrackingCallback(task_id=task_id, node_name="task_decomposer")
@@ -107,5 +101,9 @@ async def task_decomposer_node(state: AgentState, config: RunnableConfig = None)
             "usage_stats": cost_callback.to_usage_stats()
         }
     except Exception as e:
+        # Re-raise GovernanceException (or wrapped version) for hard stop
+        from utils.governance_utils import is_governance_block
+        if is_governance_block(e):
+            raise e
         print(f"❌ Error in semantic_splitter_node: {e}")
         return {"subtasks": [], "subject": "", "deliverables": [], "usage_stats": {}}

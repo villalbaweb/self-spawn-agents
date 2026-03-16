@@ -22,6 +22,16 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig = None) -> 
 
     # Cost tracking setup
     task_id = config.get("configurable", {}).get("thread_id") if config else None
+
+    # --- AGENTGUARD GOVERNANCE: Semantic Firewall ---
+    # Proactively verify intent before synthesis.
+    # The SDK now raises GovernanceException natively on BLOCK.
+    await verify_with_governance(
+        agent_id="synthesizer",
+        input_text=task,
+        context={"task_id": task_id, "depth": state.get("depth", 0)}
+    )
+
     cost_callback = CostTrackingCallback(task_id=task_id, node_name="synthesizer")
     llm_config: RunnableConfig = {"callbacks": [cost_callback]}
 
@@ -131,5 +141,8 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig = None) -> 
             "all_edges": synthesizer_edges
         }
     except Exception as e:
+        from utils.governance_utils import is_governance_block
+        if is_governance_block(e):
+            raise e
         print(f"❌ Error in synthesizer_node: {e}")
         return {"synthesis": f"Error generating synthesis: {str(e)}", "usage_stats": {}}

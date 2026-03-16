@@ -65,5 +65,8 @@ async def quality_refiner_node(instruction: str, output: str, previous_reasoning
             
         return {"output": response.content, "usage_stats": cost_callback.to_usage_stats()}
     except Exception as e:
+        from utils.governance_utils import is_governance_block
+        if is_governance_block(e):
+            raise e
         print(f"⚠️ Quality refinement failed: {e}")
         return {"output": output, "usage_stats": {}} # Fallback to original

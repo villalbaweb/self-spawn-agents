@@ -12,7 +12,8 @@ from .client import (
     verify_with_governance, 
     track_thought_telemetry, 
     track_consumption,
-    get_agentguard_client
+    get_agentguard_client,
+    GovernanceException
 )
 
 def _get_input_from_args(args: Any, kwargs: Any) -> str:
@@ -84,7 +85,10 @@ def protected_tool(
             governance_result = await _run_governance_logic(*args, **kwargs)
             if governance_result["outcome"] == "BLOCK":
                 if enforce:
-                    raise PermissionError(f"AgentGuard Policy Violation: {governance_result.get('reason')}")
+                    raise GovernanceException(
+                        f"AgentGuard Policy Violation: {governance_result.get('reason')}",
+                        decision=governance_result
+                    )
                 return {"outcome": "BLOCKED", "reason": governance_result.get("reason")}
 
             run_id = governance_result["run_id"]
@@ -136,7 +140,10 @@ def protected_tool(
             
             if governance_result["outcome"] == "BLOCK":
                 if enforce:
-                    raise PermissionError(f"AgentGuard Policy Violation: {governance_result.get('reason')}")
+                    raise GovernanceException(
+                        f"AgentGuard Policy Violation: {governance_result.get('reason')}",
+                        decision=governance_result
+                    )
                 return {"outcome": "BLOCKED", "reason": governance_result.get("reason")}
 
             run_id = governance_result["run_id"]
@@ -364,11 +371,11 @@ def langgraph_node_guard(
 
             if decision.get("outcome") == "BLOCK":
                 print(f"🚫 [AgentGuard] BLOCKED node '{node_name}': {decision.get('reason')}")
-                if "blocked_at_node" in state:
-                    state["blocked_at_node"] = node_name
-                if "workflow_status" in state:
-                    state["workflow_status"] = "blocked"
-                return state
+                # We raise a GovernanceException to ensure a HARD STOP across all frameworks
+                raise GovernanceException(
+                    f"AgentGuard Policy Violation in '{node_name}': {decision.get('reason')}",
+                    decision=decision
+                )
             
             # Update depth
             if "current_depth" in state:

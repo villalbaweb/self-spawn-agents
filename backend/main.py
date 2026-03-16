@@ -28,6 +28,10 @@ async def lifespan(app: FastAPI):
     success = await ag_client.authenticate()
     if success:
         print("✅ [Lifespan] Successfully authenticated with AgentGuard!")
+        # --- UNIVERSAL SHIELD INJECTION (Patch v2) ---
+        from agentguard_sdk.client import install_shield
+        install_shield(agent_id="production-shield")
+        print("🛡️ [Lifespan] Universal Shield installed correctly.")
     else:
         print("❌ [Lifespan] Failed to authenticate with AgentGuard.")
     
@@ -352,8 +356,15 @@ async def run_orchestrator(request: OrchestratorRequest):
             raise 
 
         except Exception as e:
-            print(f"Error in event_generator: {e}")
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            # --- GOVERNANCE EXCEPTION HANDLING ---
+            from utils.governance_utils import get_governance_exception
+            gov_exc = get_governance_exception(e)
+            if gov_exc:
+                print(f"🛑 [Governance] Block detected (wrapped: {type(e).__name__}): {gov_exc}")
+                yield f"data: {json.dumps({'type': 'error', 'message': f'🛑 [AgentGuard] Governance Block: {str(gov_exc)}'})}\n\n"
+            else:
+                print(f"Error in event_generator: {e}")
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
             
         finally:
             # Cleanup
