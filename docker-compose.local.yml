@@ -24,11 +24,19 @@ services:
       - "8001:8000"
     networks:
       - local_network
-      - agent_guard_network
     volumes:
       - ./backend:/app
     env_file:
       - .env
+    environment:
+      # AgentGuard governance is optional: the SDK fails open (ALLOW) if this
+      # is unreachable, so self-spawn-agents runs standalone without it.
+      # To wire in real governance, start agent-control-plane's local stack
+      # first (its backend publishes :8000 on the host) and this will reach
+      # it via the Docker Desktop host gateway.
+      - AGENTGUARD_URL=http://host.docker.internal:8000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres_selfspawn:
         condition: service_healthy
@@ -60,7 +68,7 @@ services:
     container_name: agent_forge_studio_dbgate_local
     restart: unless-stopped
     ports:
-      - "3001:3000"
+      - "3002:3000"
     environment:
       CONNECTIONS: postgres_selfspawn
       LABEL_postgres: Agent Database
@@ -83,6 +91,3 @@ volumes:
 networks:
   local_network:
     driver: bridge
-  agent_guard_network:
-    external: true
-    name: agent-control-plane_local_network

@@ -3,8 +3,34 @@ import asyncio
 import sys
 import os
 import json
+from unittest.mock import MagicMock
+from langgraph.checkpoint.memory import MemorySaver
 
-# Add backend directory to sys.path
+# --- AGENTGUARD ALIGNMENT TEST MOCKS ---
+# These mocks MUST be applied before importing app_graph or any agent modules
+# to ensure the pre-compiled subgraphs use the mocked versions.
+
+# 1. Mock Checkpointer
+import core.persistence.checkpointer as cp_mod
+memory_checkpointer = MemorySaver()
+cp_mod.get_checkpointer = lambda: memory_checkpointer
+cp_mod.init_checkpointer = MagicMock(return_value=None)
+cp_mod.close_checkpointer = MagicMock(return_value=None)
+
+# 2. Mock KnowledgeService (pgvector)
+import core.knowledge.service as ks_mod
+class MockKnowledgeService:
+    async def search_blueprint(self, *args, **kwargs): return None
+    async def archive_blueprint(self, *args, **kwargs): return "mock-id"
+    async def close(self): pass
+    @property
+    def similarity_threshold(self): return 0.85
+
+mock_ks = MockKnowledgeService()
+ks_mod.get_knowledge_service = lambda: mock_ks
+ks_mod.init_knowledge_service = MagicMock(return_value=mock_ks)
+
+# --- END MOCKS ---
 
 from app_graph import app_graph
 
@@ -13,17 +39,10 @@ async def test_natural_recursion():
     """
     Test with a NATURAL, non-technical user request.
     The system should autonomously decide when to spawn subgraphs.
-    
-    Epic 4.1 Update: Recursion is now handled via native LangGraph subgraphs.
-    When supervisor marks a node as recursive:true, the graph_compiler
-    invokes worker_subgraph which may use mini-orchestration for complex tasks.
     """
     print("🚀 Testing NATURAL Recursive Subgraph Triggering...")
     print("="*60)
     
-    # Natural, non-technical user request
-    # This should decompose into multiple complex steps where the supervisor
-    # might mark nodes as recursive, triggering worker_subgraph
     task = "I want to start a blog about cooking. Help me build a complete website with recipes, user accounts, and a newsletter signup."
     
     print(f"📝 User Task: {task}")
@@ -38,28 +57,32 @@ async def test_natural_recursion():
     }
 
     recursion_detected = False
-    
-    # Add thread_id to support checkpointers
     config = {"configurable": {"thread_id": "test_natural_recursion"}}
     
+    from agentguard_sdk.client import get_agentguard_client
+    ag_client = get_agentguard_client()
+    print("🛡️ Authenticating with Agent Guard...")
+    success = await ag_client.authenticate()
+    if not success:
+        print("❌ Failed to authenticate with Agent Guard. Verification might fail.")
+    else:
+        print("✅ Authenticated with Agent Guard.")
+
     try:
         print("\n▶️ Starting execution...\n")
         
-        # Stream events to see what's happening in real-time
+        # Stream events
         async for event in app_graph.astream_events(initial_state, config=config, version="v2"):
             kind = event.get("event")
             name = event.get("name", "")
             
-            # Look for recursion signals - now handled via native worker_subgraph
             if kind == "on_chain_start" and ("MiniOrchestrator" in name or "worker_subgraph" in name.lower()):
                  print(f"🔄 NATIVE SUBGRAPH TRIGGERED - {name}!")
                  recursion_detected = True
 
-            # Show progress
             if kind == "on_chain_start" and name in ["task_decomposer", "execution_planner", "graph_executor", "human_review_trigger", "synthesizer"]:
                 print(f"▶️ {name}...")
                 
-        # Get final state
         final_state = await app_graph.aget_state(config)
         state_values = final_state.values
         
@@ -69,7 +92,6 @@ async def test_natural_recursion():
         
         subtasks = state_values.get("subtasks", [])
         graph_plan = state_values.get("graph_plan", {})
-        results = state_values.get("results", {})
         all_agents = state_values.get("all_agents", [])
         
         print(f"\n🔹 Subtasks ({len(subtasks)}):")
@@ -80,7 +102,6 @@ async def test_natural_recursion():
         for node in graph_plan.get("nodes", []):
             print(f"   - [{node['agent_type']}] {node['id']}: {node['instruction'][:60]}... (Recursive: {node.get('recursive', False)})")
             
-        # Check all_agents for MiniOrchestrator or SubOrchestrator (new native subgraph)
         for agent in all_agents:
             role = agent.get("role", "")
             if role in ["SubOrchestrator", "MiniOrchestrator"]:

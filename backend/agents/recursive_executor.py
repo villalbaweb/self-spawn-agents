@@ -107,38 +107,50 @@ async def create_mini_plan(task: str, subject: str, root_task_id: str = None, co
 <task>Generate the parallel execution plan.</task>"""
 
 
-    try:
-        messages = [
-            SystemMessage(content=plan_prompt),
-            HumanMessage(content="Decompose the grand task into the requested parallel sub-tasks based on the core subject.")
-        ]
-        
-        # Cost tracking - use root_task_id for consistent attribution
-        cost_callback = CostTrackingCallback(task_id=root_task_id, node_name="mini_planner")
-        llm_config: RunnableConfig = {"callbacks": [cost_callback]}
-        
-        structured_llm = llm_mini.with_structured_output(MiniPlan)
-        plan = await safe_ainvoke(structured_llm, messages, config=llm_config)
-        
-        # Record to global tracker
-        tracker = CostTracker.get_instance()
-        for record in cost_callback.records:
-            tracker._add_record(record)
-        print(f"💰 [mini_planner] Cost: ${cost_callback.get_total_cost():.6f}")
-        
-        return plan, cost_callback.to_usage_stats()
-        
-    except Exception as e:
-        from utils.governance_utils import is_governance_block
-        if is_governance_block(e):
-            raise e
-        print(f"⚠️ [MiniPlanner] Failed to create plan: {e}")
-        usage = cost_callback.to_usage_stats() if 'cost_callback' in locals() else {}
-        # Fallback: single research task
-        return MiniPlan(
-            tasks=[MiniTask(id="fallback_research", agent_type="Researcher", instruction=task)],
-            reasoning=f"Fallback due to planning error: {e}"
-        ), usage
+    # --- AGENTGUARD GOVERNANCE: Identity Propagation ---
+    from utils.governance_utils import governance_context
+    with governance_context(agent_id="mini_planner", run_id=root_task_id or "default-run"):
+        try:
+            messages = [
+                SystemMessage(content=plan_prompt),
+                HumanMessage(content=f"[RUN_ID: {root_task_id or 'unknown'}][AGENT: mini_planner]\nDecompose the grand task into the requested parallel sub-tasks.")
+            ]
+            
+            # Cost tracking - use root_task_id for consistent attribution
+            cost_callback = CostTrackingCallback(task_id=root_task_id, node_name="mini_planner")
+            llm_config: RunnableConfig = {"callbacks": [cost_callback]}
+            
+            structured_llm = llm_mini.with_structured_output(MiniPlan)
+            plan = await safe_ainvoke(structured_llm, messages, config=llm_config)
+            
+            # --- SEMANTIC LOOP GUARD ---
+            # If any sub-task is too similar to the grand task, it indicates a semantic loop.
+            from difflib import SequenceMatcher
+            for mt in plan.tasks:
+                similarity = SequenceMatcher(None, mt.instruction.lower(), task.lower()).ratio()
+                if similarity > 0.9:
+                    print(f"⚠️ [LoopGuard] Sub-task '{mt.id}' is {similarity:.2%} similar to parent. Aborting plan.")
+                    raise ValueError(f"Semantic loop detected: Sub-task is too similar to parent task.")
+
+            # Record to global tracker
+            tracker = CostTracker.get_instance()
+            for record in cost_callback.records:
+                tracker._add_record(record)
+            print(f"💰 [mini_planner] Cost: ${cost_callback.get_total_cost():.6f}")
+            
+            return plan, cost_callback.to_usage_stats()
+            
+        except Exception as e:
+            from utils.governance_utils import is_governance_block
+            if is_governance_block(e):
+                raise e
+            print(f"⚠️ [MiniPlanner] Failed to create plan: {e}")
+            usage = cost_callback.to_usage_stats() if 'cost_callback' in locals() else {}
+            # Fallback: single research task
+            return MiniPlan(
+                tasks=[MiniTask(id="fallback_research", agent_type="Researcher", instruction=task)],
+                reasoning=f"Fallback due to planning error: {e}"
+            ), usage
 
 
 async def execute_mini_plan(
@@ -205,6 +217,7 @@ async def execute_mini_plan(
                     "parent_node_id": task_id,
                     "root_task_id": root_task_id,
                     "depth": next_depth,
+                    "parent_task": state.get("task", ""), # Pass current task as parent for child semantic context
                     "results": {},
                     "all_agents": [],
                     "all_edges": [],
@@ -580,45 +593,46 @@ async def execute_node(state: WorkerState, config: RunnableConfig = None) -> Dic
             "usage_stats": state.get("usage_stats", {}), # Pass current total for internal budget checks
             "root_task_id": root_task_id
         }
-        
         try:
-            result = await task_executor_node(worker_state, enriched_task, "Researcher", config)
-            output = result.get("output", str(result))
-            meta = result.get("metadata", {})
-            execution_time = time.time() - start_time
-            
-            agent_data = {
-                "id": parent_id,
-                "role": "SubWorker",
-                "status": meta.get("status", "completed"),
-                "depth": current_depth,
-                "instruction": task,
-                "output": output[:500] if len(output) > 500 else output,
-                "execution_time_seconds": round(execution_time, 2),
-                "tool_used": meta.get("tool_used"),
-                "confidence_score": meta.get("confidence_score", 0.5),
-                "orchestration_mode": "direct"
-            }
-            
-            # Combine complexity check usage with worker usage
-            final_usage = dict(node_usage)
-            worker_usage = result.get("usage_stats", {})
-            for k, v in worker_usage.items():
-                final_usage[k] = final_usage.get(k, 0) + v
-            
-            # Ensure steps is incremented correctly (1 step for the worker)
-            final_usage["steps"] = final_usage.get("steps", 0) + 1
+            # --- AGENTGUARD GOVERNANCE: Identity Propagation ---
+            from utils.governance_utils import governance_context
+            with governance_context(agent_id="recursive_executor", run_id=root_task_id or "default-run"):
+                result = await task_executor_node(worker_state, enriched_task, "Researcher", config)
+                output = result.get("output", str(result))
+                meta = result.get("metadata", {})
+                execution_time = time.time() - start_time
+                
+                agent_data = {
+                    "id": parent_id,
+                    "role": "SubWorker",
+                    "status": meta.get("status", "completed"),
+                    "depth": current_depth,
+                    "instruction": task,
+                    "output": output[:500] if len(output) > 500 else output,
+                    "execution_time_seconds": round(execution_time, 2),
+                    "tool_used": meta.get("tool_used"),
+                    "confidence_score": meta.get("confidence_score", 0.5),
+                    "orchestration_mode": "direct"
+                }
 
-            return {
-                "results": {parent_id: output},
-                "usage_stats": final_usage,
-                "all_agents": [agent_data],
-                "all_edges": []
-            }
-            
+                # Combine complexity check usage with worker usage
+                final_usage = dict(node_usage)
+                worker_usage = result.get("usage_stats", {})
+                for k, v in worker_usage.items():
+                    final_usage[k] = final_usage.get(k, 0) + v
+                
+                # Ensure steps is incremented correctly (1 step for the worker)
+                final_usage["steps"] = final_usage.get("steps", 0) + 1
+
+                return {
+                    "results": {parent_id: output},
+                    "usage_stats": final_usage,
+                    "all_agents": [agent_data],
+                    "all_edges": []
+                }
+                
         except Exception as e:
             # CRITICAL FIX: Re-raise LangGraph interrupt exceptions so they bubble up properly
-            # to the outer graph instead of being caught as errors
             from langgraph.errors import GraphBubbleUp
             from utils.governance_utils import is_governance_block
             if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__ or is_governance_block(e):

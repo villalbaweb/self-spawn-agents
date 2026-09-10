@@ -133,24 +133,19 @@ async def task_executor_node(state: dict, instruction: str, agent_type: str, con
             context={"task_id": task_id, "depth": current_depth}
         )
 
-    except Exception as e:
-        # Check if it's any kind of LangGraph interrupt (which shouldn't be caught)
-        from langgraph.errors import GraphBubbleUp
-        from utils.governance_utils import is_governance_block
-        if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__ or is_governance_block(e):
-            raise e
-        print(f"⚠️ AgentGuard verification failed ({e}). Proceeding without firewall.")
-
-    # Generate dynamic system prompt (keeping existing logic)
-    try:
-        sys_prompt, prompt_usage = await generate_dynamic_system_prompt(instruction, agent_type, config, root_task_id=task_id)
-        if not sys_prompt: raise ValueError("Empty system prompt")
-        # Merge prompt generation usage
-        for k, v in prompt_usage.items():
-            usage_stats_update[k] = usage_stats_update.get(k, 0) + v
-    except Exception as e:
-        print(f"⚠️ Failed to generate dynamic prompt ({e}). Using fallback.")
-        sys_prompt = f"""<role>Expert {agent_type}</role>
+        # --- AGENTGUARD GOVERNANCE: Identity Propagation ---
+        from utils.governance_utils import governance_context
+        with governance_context(agent_id=agent_type, run_id=task_id or "default-run"):
+            # Generate dynamic system prompt (keeping existing logic)
+            try:
+                sys_prompt, prompt_usage = await generate_dynamic_system_prompt(instruction, agent_type, config, root_task_id=task_id)
+                if not sys_prompt: raise ValueError("Empty system prompt")
+                # Merge prompt generation usage
+                for k, v in prompt_usage.items():
+                    usage_stats_update[k] = usage_stats_update.get(k, 0) + v
+            except Exception as e:
+                print(f"⚠️ Failed to generate dynamic prompt ({e}). Using fallback.")
+                sys_prompt = f"""<role>Expert {agent_type}</role>
 <objective>Execute the provided task with maximum precision, adhering to all technical and professional standards.</objective>
 <constraints>
 - Deliver the result directly without unnecessary conversational filler.
@@ -158,283 +153,259 @@ async def task_executor_node(state: dict, instruction: str, agent_type: str, con
 - If the task is unclear, state exactly what information is missing.
 </constraints>"""
 
-    user_content = f"""<task>
+            user_content = f"""<task>
 {instruction}
 </task>"""
 
-    messages = [
-        SystemMessage(content=sys_prompt),
-        HumanMessage(content=user_content)
-    ]
+            messages = [
+                SystemMessage(content=sys_prompt),
+                HumanMessage(content=f"[RUN_ID: {task_id or 'unknown'}][AGENT: {agent_type}]\n{user_content}")
+            ]
 
-    # Inject depth into tool execution logic if needed
-    current_depth = state.get("depth", 0)
-    print(f"🤖 [GenericWorker] Processing for {agent_type} with depth {current_depth}")
+            # Inject depth into tool execution logic if needed
+            print(f"🤖 [GenericWorker] Processing for {agent_type} with depth {current_depth}")
 
-    # Cost tracking setup - reuse task_id extracted earlier for consistent attribution
-    cost_callback = CostTrackingCallback(task_id=task_id, node_name=f"worker_{agent_type.lower()}")
-    llm_config: RunnableConfig = {"callbacks": [cost_callback]}
+            # Cost tracking setup - reuse task_id extracted earlier for consistent attribution
+            cost_callback = CostTrackingCallback(task_id=task_id, node_name=f"worker_{agent_type.lower()}")
+            llm_config: RunnableConfig = {"callbacks": [cost_callback]}
 
-    try:
-        # Bind tools based on agent type
-        # Note: Orchestrator no longer uses spawn_subgraph - recursion is now via supervisor planning
-        tools = []
-        start_time = time.time()
-        tool_used = None
+            try:
+                # Bind tools based on agent type
+                # Note: Orchestrator no longer uses spawn_subgraph - recursion is now via supervisor planning
+                tools = []
+                start_time = time.time()
+                tool_used = None
 
-        if agent_type.lower() == "researcher":
-            tools = [web_search]
-        elif agent_type.lower() == "coder":
-            tools = [python_repl]
-        # Orchestrator has no tools - recursion is handled via recursive nodes in graph_compiler
+                if agent_type.lower() == "researcher":
+                    tools = [web_search]
+                elif agent_type.lower() == "coder":
+                    tools = [python_repl]
+                # Orchestrator has no tools - recursion is handled via recursive nodes in graph_compiler
 
-        llm_with_tools = llm.bind_tools(tools) if tools else llm
+                llm_with_tools = llm.bind_tools(tools) if tools else llm
 
-        # Pass cost tracking config to LLM
-        response = await safe_ainvoke(llm_with_tools, messages, config=llm_config)
+                # Pass cost tracking config to LLM
+                response = await safe_ainvoke(llm_with_tools, messages, config=llm_config)
 
-        final_output = ""
-        tools_available = []
+                final_output = ""
+                tools_available = []
 
-        # Check for tool calls
-        if response.tool_calls:
-            tool_call = response.tool_calls[0]
-            tool_name = tool_call["name"]
-            print(f"🛠️ Tool Call Detected: {tool_name}")
-            tool_used = tool_name
-            tools_available = [tool_name]
+                # Check for tool calls
+                if response.tool_calls:
+                    tool_call = response.tool_calls[0]
+                    tool_name = tool_call["name"]
+                    print(f"🛠️ Tool Call Detected: {tool_name}")
+                    tool_used = tool_name
+                    tools_available = [tool_name]
 
-            if tool_name == "web_search":
-                tool_args = tool_call["args"]
-                original_query = tool_args["query"]
-
-                if config:
-                     tool_output = await web_search.ainvoke(original_query, config=config)
-                else:
-                     tool_output = await web_search.ainvoke(original_query)
-
-                # Auto-refinement when Missing: metadata detected
-                if "[SEARCH_METADATA]" in tool_output:
-                    missing_match = re.search(r'Missing terms not found.*?:\s*([^\n]+)', tool_output)
-                    if missing_match:
-                        missing_terms = missing_match.group(1).strip()
-                        subject = state.get("subject", "")
-                        refined_query = f"{subject} {missing_terms} retailers brands companies stores"
-                        print(f"🔄 Auto-refining search for missing terms: {missing_terms}")
+                    if tool_name == "web_search":
+                        tool_args = tool_call["args"]
+                        original_query = tool_args["query"]
 
                         if config:
-                            refined_output = await web_search.ainvoke(refined_query, config=config)
+                             tool_output = await web_search.ainvoke(original_query, config=config)
                         else:
-                            refined_output = await web_search.ainvoke(refined_query)
+                             tool_output = await web_search.ainvoke(original_query)
 
-                        tool_output += f"\n\n[REFINED SEARCH for: {missing_terms}]\n{refined_output}"
+                        # Auto-refinement when Missing: metadata detected
+                        if "[SEARCH_METADATA]" in tool_output:
+                            missing_match = re.search(r'Missing terms not found.*?:\s*([^\n]+)', tool_output)
+                            if missing_match:
+                                missing_terms = missing_match.group(1).strip()
+                                subject = state.get("subject", "")
+                                refined_query = f"{subject} {missing_terms} retailers brands companies stores"
+                                print(f"🔄 Auto-refining search for missing terms: {missing_terms}")
 
-                final_output = f"Search Results:\n{tool_output}"
+                                if config:
+                                    refined_output = await web_search.ainvoke(refined_query, config=config)
+                                else:
+                                    refined_output = await web_search.ainvoke(refined_query)
 
-            elif tool_name == "python_repl":
-                tool_args = tool_call["args"]
-                if config:
-                    tool_output = await python_repl.ainvoke(tool_args, config=config)
+                                tool_output += f"\n\n[REFINED SEARCH for: {missing_terms}]\n{refined_output}"
+
+                        final_output = f"Search Results:\n{tool_output}"
+
+                    elif tool_name == "python_repl":
+                        tool_args = tool_call["args"]
+                        if config:
+                            tool_output = await python_repl.ainvoke(tool_args, config=config)
+                        else:
+                            tool_output = await python_repl.ainvoke(tool_args)
+
+                        final_output = f"Python Execution:\n{tool_output}"
+
                 else:
-                    tool_output = await python_repl.ainvoke(tool_args)
+                    # No tool call - direct LLM response
+                    if agent_type.lower() == "researcher":
+                        tools_available = ["web_search"]
+                    elif agent_type.lower() == "coder":
+                        tools_available = ["python_repl"]
+                    final_output = response.content
 
-                final_output = f"Python Execution:\n{tool_output}"
+                execution_time = time.time() - start_time
 
-        else:
-            # No tool call - direct LLM response
-            if agent_type.lower() == "researcher":
-                tools_available = ["web_search"]
-            elif agent_type.lower() == "coder":
-                tools_available = ["python_repl"]
-            final_output = response.content
+                # --- TIER 1: CONFIDENCE CHECK & SELF-CORRECTION ---
+                # Pass task_id for consistent cost attribution
+                confidence_res, val_usage = await evaluate_confidence(instruction, final_output, config, root_task_id=task_id)
+                confidence_score = confidence_res["confidence_score"]
+                confidence_reasoning = confidence_res["confidence_reasoning"]
 
-        execution_time = time.time() - start_time
+                # Update usage_stats_update from the primary callback
+                primary_usage = cost_callback.to_usage_stats()
+                for k, v in primary_usage.items():
+                    usage_stats_update[k] = usage_stats_update.get(k, 0) + v
 
-        # --- TIER 1: CONFIDENCE CHECK & SELF-CORRECTION ---
-        # Pass task_id for consistent cost attribution
-        confidence_res, val_usage = await evaluate_confidence(instruction, final_output, config, root_task_id=task_id)
-        confidence_score = confidence_res["confidence_score"]
-        confidence_reasoning = confidence_res["confidence_reasoning"]
+                # Merge evaluation usage
+                for k, v in val_usage.items():
+                    usage_stats_update[k] = usage_stats_update.get(k, 0) + v
 
-        # Update usage_stats_update from the primary callback
-        primary_usage = cost_callback.to_usage_stats()
-        for k, v in primary_usage.items():
-            usage_stats_update[k] = usage_stats_update.get(k, 0) + v
+                if confidence_score < TIER1_THRESHOLD:
+                     # Trigger quality refinement (Tier 1)
+                     correction_res = await quality_refiner_node(instruction, final_output, confidence_reasoning, agent_type, config, root_task_id=task_id)
+                     final_output = correction_res["output"]
 
-        # Merge evaluation usage
-        for k, v in val_usage.items():
-            usage_stats_update[k] = usage_stats_update.get(k, 0) + v
+                     # Merge correction usage
+                     for k, v in correction_res.get("usage_stats", {}).items():
+                         usage_stats_update[k] = usage_stats_update.get(k, 0) + v
 
-        if confidence_score < TIER1_THRESHOLD:
-             # Trigger quality refinement (Tier 1)
-             correction_res = await quality_refiner_node(instruction, final_output, confidence_reasoning, agent_type, config, root_task_id=task_id)
-             final_output = correction_res["output"]
+                     # Re-evaluate confidence
+                     confidence_res, val_usage2 = await evaluate_confidence(instruction, final_output, config, root_task_id=task_id)
+                     confidence_score = confidence_res["confidence_score"]
+                     confidence_reasoning = f"[Self-Corrected] {confidence_res['confidence_reasoning']}"
 
-             # Merge correction usage
-             for k, v in correction_res.get("usage_stats", {}).items():
-                 usage_stats_update[k] = usage_stats_update.get(k, 0) + v
+                     # Merge usage from second evaluation
+                     for k, v in val_usage2.items():
+                         usage_stats_update[k] = usage_stats_update.get(k, 0) + v
 
-             # Re-evaluate confidence
-             confidence_res, val_usage2 = await evaluate_confidence(instruction, final_output, config, root_task_id=task_id)
-             confidence_score = confidence_res["confidence_score"]
-             confidence_reasoning = f"[Self-Corrected] {confidence_res['confidence_reasoning']}"
+                # --- TIER 3: HARD STOP (HITL) ---
+                if confidence_score < TIER3_THRESHOLD:
+                    print(f"🛑 [HITL Tier 3] Triggering Hard Stop interrupt")
+                    interrupt_payload = {
+                        "type": "tier3_interrupt",
+                        "agent_type": agent_type,
+                        "confidence_score": confidence_score,
+                        "current_output": final_output,
+                        "reasoning": confidence_reasoning,
+                        "message": f"Critical failure in {agent_type}: Confidence {confidence_score:.2f} is below safety threshold ({TIER3_THRESHOLD})."
+                    }
 
-             # Merge usage from second evaluation
-             for k, v in val_usage2.items():
-                 usage_stats_update[k] = usage_stats_update.get(k, 0) + v
+                    # ⏸️ PAUSE EXECUTION HERE ⏸️
+                    resume_value = interrupt(interrupt_payload)
 
-        # --- TIER 3: HARD STOP (HITL) ---
-        if confidence_score < TIER3_THRESHOLD:
-            print(f"🛑 [HITL Tier 3] Triggering Hard Stop interrupt")
-            print(f"🔍 [Interrupt Debug] Tier 3 Details:")
-            print(f"   - Agent: {agent_type}")
-            print(f"   - Confidence: {confidence_score:.4f}")
-            print(f"   - Threshold: {TIER3_THRESHOLD}")
-            print(f"   - Reasoning: {confidence_reasoning[:100]}...")
-
-            interrupt_payload = {
-                "type": "tier3_interrupt",
-                "agent_type": agent_type,
-                "confidence_score": confidence_score,
-                "current_output": final_output,
-                "reasoning": confidence_reasoning,
-                "message": f"Critical failure in {agent_type}: Confidence {confidence_score:.2f} is below safety threshold ({TIER3_THRESHOLD})."
-            }
-
-            # ⏸️ PAUSE EXECUTION HERE ⏸️
-            # The function will suspend. When resumed, resume_value will contain the user's input.
-            resume_value = interrupt(interrupt_payload)
-
-            # 🔍 [Interrupt Debug] Log resume value received
-            print(f"🔍 [Interrupt Debug] Tier 3 Resume value received:")
-            print(f"   - Type: {type(resume_value)}")
-            print(f"   - Value: {resume_value}")
-
-            # Handle Resume Logic
-            if resume_value and isinstance(resume_value, dict):
-                action = resume_value.get("action", "proceed")
-                print(f"✅ [HITL Tier 3] Resuming with action: {action}")
-
-                # Scenario A: User provided a manual fix
-                if action == "manual_fix" and "output" in resume_value:
-                    final_output = resume_value["output"]
-                    confidence_score = 1.0
-                    confidence_reasoning = "Manually corrected by user."
-                    print(f"   ✏️ Using manual fix from user")
-
-                # Scenario B: User said "proceed" - keep original output
-                elif action == "proceed":
-                    print(f"   ➡️ Proceeding with original output (confidence override)")
-                    confidence_score = 0.6  # Bump to minimum acceptable
-                    confidence_reasoning += " [User override: proceed despite low confidence]"
-
-                # Scenario C: User said "abort"
-                elif action == "abort":
-                    print(f"   🛑 User requested abort")
-                    final_output = "[ABORTED BY USER]"
-                    confidence_score = 0.0
-                    confidence_reasoning = "Execution aborted by user."
-
-                # Scenario D: User said "retry" (not implemented yet)
-                elif action == "retry":
-                    print(f"   🔄 Retry requested (not implemented, proceeding)")
-                    confidence_score = 0.6
+                    # Handle Resume Logic
+                    if resume_value and isinstance(resume_value, dict):
+                        action = resume_value.get("action", "proceed")
+                        if action == "manual_fix" and "output" in resume_value:
+                            final_output = resume_value["output"]
+                            confidence_score = 1.0
+                            confidence_reasoning = "Manually corrected by user."
+                        elif action == "proceed":
+                            confidence_score = 0.6
+                            confidence_reasoning += " [User override: proceed despite low confidence]"
+                        elif action == "abort":
+                            final_output = "[ABORTED BY USER]"
+                            confidence_score = 0.0
+                            confidence_reasoning = "Execution aborted by user."
+                        elif action == "retry":
+                            confidence_score = 0.6
 
 
-        # --- TIER 2: SOFT FLAG ---
-        low_confidence_flag = confidence_score < TIER2_THRESHOLD
+                # --- TIER 2: SOFT FLAG ---
+                low_confidence_flag = confidence_score < TIER2_THRESHOLD
 
-        # Build warning message if Tier 2 triggered
-        warning = None
-        if low_confidence_flag:
-            warning = f"Low Confidence Warning: {(confidence_score * 100):.0f}% - {confidence_reasoning}"
+                # Build warning message if Tier 2 triggered
+                warning = None
+                if low_confidence_flag:
+                    warning = f"Low Confidence Warning: {(confidence_score * 100):.0f}% - {confidence_reasoning}"
 
-        # Record costs to global tracker
-        tracker = CostTracker.get_instance()
-        records = cost_callback.records
-        print(f"💰 [worker_{agent_type.lower()}] Callback has {len(records)} records to merge")
-        for record in records:
-            # Ensure task_id is set before merging
-            if not record.task_id:
-                record.task_id = task_id
-            tracker._add_record(record)
-            print(f"💰 [worker_{agent_type.lower()}] Merged record: task_id={record.task_id}, node={record.node_name}, cost=${record.cost_usd:.6f}")
+                # Record costs to global tracker
+                tracker = CostTracker.get_instance()
+                records = cost_callback.records
+                for record in records:
+                    if not record.task_id:
+                        record.task_id = task_id
+                    tracker._add_record(record)
 
-        worker_cost = cost_callback.get_total_cost()
-        print(f"💰 [worker_{agent_type.lower()}] Total Cost: ${worker_cost:.6f}, Tracker now has {len(tracker.records)} records")
+                worker_cost = cost_callback.get_total_cost()
 
-        # --- AGENTGUARD GOVERNANCE: Circuit Breaker ---
-        try:
-            print(f"⚡ [AgentGuard] Recording consumption for task {task_id}...")
-            consumption = await track_consumption(
-                run_id=task_id or "default-run",
-                cost=worker_cost,
-                steps=1,
-                depth=current_depth
-            )
-            if consumption.get("status") == "BLOCKED":
-                print(f"🛑 [AgentGuard] Circuit Breaker tripped: {consumption.get('reason')}")
-                final_output += f"\n\n[WARNING: AGENTGUARD CIRCUIT BREAKER TRIPPED: {consumption.get('reason')}]"
-        except Exception as e:
-            print(f"⚠️ AgentGuard consumption tracking failed ({e}). Proceeding.")
+                # --- AGENTGUARD GOVERNANCE: Circuit Breaker ---
+                try:
+                    consumption = await track_consumption(
+                        run_id=task_id or "default-run",
+                        cost=worker_cost,
+                        steps=1,
+                        depth=current_depth
+                    )
+                    if consumption.get("status") == "BLOCKED":
+                        final_output += f"\n\n[WARNING: AGENTGUARD CIRCUIT BREAKER TRIPPED: {consumption.get('reason')}]"
+                except Exception as e:
+                    print(f"⚠️ AgentGuard consumption tracking failed ({e}). Proceeding.")
 
-        result_dict = {
-            "output": final_output,
-            "usage_stats": usage_stats_update,
-            "metadata": {
-                "system_prompt": sys_prompt,
-                "agent_role": agent_type,
-                "instruction": instruction,
-                "tool_used": tool_used,
-                "execution_time_seconds": round(execution_time, 2),
-                "depth": current_depth,
-                "status": "completed",
-                "tools_available": tools_available,
-                "confidence_score": confidence_score,
-                "confidence_reasoning": confidence_reasoning,
-                "low_confidence_flag": low_confidence_flag,
-                "cost_usd": worker_cost
-            }
-        }
+                result_dict = {
+                    "output": final_output,
+                    "usage_stats": usage_stats_update,
+                    "metadata": {
+                        "system_prompt": sys_prompt,
+                        "agent_role": agent_type,
+                        "instruction": instruction,
+                        "tool_used": tool_used,
+                        "execution_time_seconds": round(execution_time, 2),
+                        "depth": current_depth,
+                        "status": "completed",
+                        "tools_available": tools_available,
+                        "confidence_score": confidence_score,
+                        "confidence_reasoning": confidence_reasoning,
+                        "low_confidence_flag": low_confidence_flag,
+                        "cost_usd": worker_cost
+                    }
+                }
 
-        if warning:
-            result_dict["metadata"]["warning"] = warning
+                if warning:
+                    result_dict["metadata"]["warning"] = warning
 
-        return result_dict
+                return result_dict
+
+            except Exception as e:
+                # Proper inner exception handling
+                from langgraph.errors import GraphBubbleUp
+                from utils.governance_utils import is_governance_block
+                if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__ or is_governance_block(e):
+                    raise e
+                raise e # re-raise to outer catch
 
     except (Exception) as e:
-        # Check if it's any kind of LangGraph interrupt (which shouldn't be caught)
-        from langgraph.errors import GraphBubbleUp
-        from utils.governance_utils import is_governance_block
-        if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__ or is_governance_block(e):
-            raise e
+            # Check if it's any kind of LangGraph interrupt (which shouldn't be caught)
+            from langgraph.errors import GraphBubbleUp
+            from utils.governance_utils import is_governance_block
+            if isinstance(e, GraphBubbleUp) or "Interrupt" in type(e).__name__ or is_governance_block(e):
+                raise e
 
-        execution_time = time.time() - start_time if 'start_time' in locals() else 0
+            execution_time = time.time() - start_time if 'start_time' in locals() else 0
 
-        # Recover partial usage stats even on failure
-        final_usage = usage_stats_update if 'usage_stats_update' in locals() else {}
-        if 'cost_callback' in locals():
-            try:
-                cb_usage = cost_callback.to_usage_stats()
-                for k, v in cb_usage.items():
-                    final_usage[k] = final_usage.get(k, 0) + v
-            except:
-                pass
+            # Recover partial usage stats even on failure
+            final_usage = usage_stats_update if 'usage_stats_update' in locals() else {}
+            if 'cost_callback' in locals():
+                try:
+                    cb_usage = cost_callback.to_usage_stats()
+                    for k, v in cb_usage.items():
+                        final_usage[k] = final_usage.get(k, 0) + v
+                except:
+                    pass
 
-        return {
-            "output": f"Error: {str(e)}",
-            "usage_stats": final_usage,
-            "metadata": {
-                "system_prompt": sys_prompt if 'sys_prompt' in locals() else "Error generating prompt",
-                "agent_role": agent_type,
-                "instruction": instruction,
-                "tool_used": None,
-                "execution_time_seconds": round(execution_time, 2),
-                "depth": current_depth if 'current_depth' in locals() else 0,
-                "status": "error",
-                "error_message": str(e),
-                "tools_available": [],
-                "confidence_score": 0.0,
-                "confidence_reasoning": f"Error during execution: {str(e)}"
+            return {
+                "output": f"Error: {str(e)}",
+                "usage_stats": final_usage,
+                "metadata": {
+                    "system_prompt": sys_prompt if 'sys_prompt' in locals() else "Error generating prompt",
+                    "agent_role": agent_type,
+                    "instruction": instruction,
+                    "tool_used": None,
+                    "execution_time_seconds": round(execution_time, 2),
+                    "depth": current_depth if 'current_depth' in locals() else 0,
+                    "status": "error",
+                    "error_message": str(e),
+                    "tools_available": [],
+                    "confidence_score": 0.0,
+                    "confidence_reasoning": f"Error during execution: {str(e)}"
+                }
             }
-        }

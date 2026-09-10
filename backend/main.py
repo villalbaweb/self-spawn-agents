@@ -28,10 +28,10 @@ async def lifespan(app: FastAPI):
     success = await ag_client.authenticate()
     if success:
         print("✅ [Lifespan] Successfully authenticated with AgentGuard!")
-        # --- UNIVERSAL SHIELD INJECTION (Patch v2) ---
-        from agentguard_sdk.client import install_shield
-        install_shield(agent_id="production-shield")
-        print("🛡️ [Lifespan] Universal Shield installed correctly.")
+        # --- UNIVERSAL SHIELD INJECTION (Patch v2 - Alignment) ---
+        from utils.governance_utils import install_contextual_shield
+        install_contextual_shield(default_agent_id="production-shield")
+        print("🛡️ [Lifespan] Contextual Alignment Shield installed.")
     else:
         print("❌ [Lifespan] Failed to authenticate with AgentGuard.")
     

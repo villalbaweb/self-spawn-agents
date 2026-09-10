@@ -79,56 +79,59 @@ Available Agent Types:
 
     user_content = f"Original Task: {task}\n\nSubtasks:\n" + "\n".join(f"- {s}" for s in subtasks)
 
-    messages = [
-        SystemMessage(content=sys_prompt),
-        HumanMessage(content=f"<input_data>{user_content}</input_data>")
-    ]
+    # --- AGENTGUARD GOVERNANCE: Identity Propagation ---
+    from utils.governance_utils import governance_context
+    with governance_context(agent_id="execution_planner", run_id=task_id or "default-run"):
+        messages = [
+            SystemMessage(content=sys_prompt),
+            HumanMessage(content=f"[RUN_ID: {task_id or 'unknown'}][AGENT: execution_planner]\n<input_data>{user_content}</input_data>")
+        ]
 
-    try:
-        structured_llm = llm.with_structured_output(GraphPlan)
-        plan: GraphPlan = await structured_llm.ainvoke(messages, config=llm_config)
-
-        # Record costs to global tracker
-        tracker = CostTracker.get_instance()
-        for record in cost_callback.records:
-            tracker._add_record(record)
-        print(f"💰 [supervisor] Cost: ${cost_callback.get_total_cost():.6f}")
-
-        # --- AGENTGUARD GOVERNANCE: Circuit Breaker ---
         try:
-            print(f"⚡ [AgentGuard] Recording consumption for task {task_id}...")
-            await track_consumption(
-                run_id=task_id or "default-run",
-                cost=cost_callback.get_total_cost(),
-                steps=1,
-                depth=state.get("depth", 0)
-            )
+            structured_llm = llm.with_structured_output(GraphPlan)
+            plan: GraphPlan = await structured_llm.ainvoke(messages, config=llm_config)
+
+            # Record costs to global tracker
+            tracker = CostTracker.get_instance()
+            for record in cost_callback.records:
+                tracker._add_record(record)
+            print(f"💰 [supervisor] Cost: ${cost_callback.get_total_cost():.6f}")
+
+            # --- AGENTGUARD GOVERNANCE: Circuit Breaker ---
+            try:
+                print(f"⚡ [AgentGuard] Recording consumption for task {task_id}...")
+                await track_consumption(
+                    run_id=task_id or "default-run",
+                    cost=cost_callback.get_total_cost(),
+                    steps=1,
+                    depth=state.get("depth", 0)
+                )
+            except Exception as e:
+                print(f"⚠️ AgentGuard consumption tracking failed ({e}). Proceeding.")
+
+            # Add Supervisor to visualization
+            supervisor_agent = {
+                "id": "supervisor",
+                "role": "Orchestrator",
+                "instruction": task,
+                "output": f"Planned {len(plan.nodes)} nodes: {', '.join(n.id for n in plan.nodes)}",
+                "tools": [],
+                "depth": state.get("depth", 0),
+                "status": "completed",
+                "execution_time_seconds": 0.0 # Placeholder
+            }
+
+            # Convert pydantic model to dict for state storage
+            return {
+                "graph_plan": plan.model_dump(),
+                "usage_stats": cost_callback.to_usage_stats(),
+                "all_agents": [supervisor_agent]
+            }
+
         except Exception as e:
-            print(f"⚠️ AgentGuard consumption tracking failed ({e}). Proceeding.")
-
-        # Add Supervisor to visualization
-        supervisor_agent = {
-            "id": "supervisor",
-            "role": "Orchestrator",
-            "instruction": task,
-            "output": f"Planned {len(plan.nodes)} nodes: {', '.join(n.id for n in plan.nodes)}",
-            "tools": [],
-            "depth": state.get("depth", 0),
-            "status": "completed",
-            "execution_time_seconds": 0.0 # Placeholder
-        }
-
-        # Convert pydantic model to dict for state storage
-        return {
-            "graph_plan": plan.model_dump(),
-            "usage_stats": cost_callback.to_usage_stats(),
-            "all_agents": [supervisor_agent]
-        }
-
-    except Exception as e:
-        # Re-raise GovernanceException (or wrapped version) for hard stop
-        from utils.governance_utils import is_governance_block
-        if is_governance_block(e):
-            raise e
-        print(f"❌ Error in supervisor_node: {e}")
-        return {"graph_plan": {}, "usage_stats": cost_callback.to_usage_stats()}
+            # Re-raise GovernanceException (or wrapped version) for hard stop
+            from utils.governance_utils import is_governance_block
+            if is_governance_block(e):
+                raise e
+            print(f"❌ Error in supervisor_node: {e}")
+            return {"graph_plan": {}, "usage_stats": cost_callback.to_usage_stats()}

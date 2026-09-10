@@ -69,80 +69,83 @@ async def synthesizer_node(state: AgentState, config: RunnableConfig = None) -> 
 
 <task>Create the final synthesis report based on the <execution_results>.</task>"""
 
-    messages = [
-        SystemMessage(content=synthesis_prompt),
-        HumanMessage(content=user_input)
-    ]
-
-    try:
-        response = await llm.ainvoke(messages, config=llm_config)
-
-        # Check for missing deliverables in the output (Fuzzy keyword check)
-        output = response.content
-        missing = []
-        for d in deliverables:
-            # Extract keywords (words > 3 chars)
-            keywords = [word.lower() for word in d.split() if len(word) > 3]
-            # If at least 50% of keywords are missing, consider it missing
-            if keywords:
-                found_count = sum(1 for k in keywords if k in output.lower())
-                if found_count / len(keywords) < 0.5:
-                    missing.append(d)
-            elif d.lower() not in output.lower():
-                # Fallback for very short deliverable strings
-                missing.append(d)
-
-        if missing:
-            print(f"⚠️ Synthesis may be missing deliverables: {missing}")
-            output += f"\n\n---\n### ⚠️ Note: The following deliverables may need additional work:\n" + "\n".join(f"- {m}" for m in missing)
-
-        # Record costs to global tracker
-        tracker = CostTracker.get_instance()
-        for record in cost_callback.records:
-            tracker._add_record(record)
-        print(f"💰 [synthesizer] Cost: ${cost_callback.get_total_cost():.6f}")
-
-        # --- AGENTGUARD GOVERNANCE: Circuit Breaker ---
-        try:
-            print(f"⚡ [AgentGuard] Recording consumption for task {task_id}...")
-            await track_consumption(
-                run_id=task_id or "default-run",
-                cost=cost_callback.get_total_cost(),
-                steps=1,
-                depth=state.get("depth", 0)
-            )
-        except Exception as e:
-            print(f"⚠️ AgentGuard consumption tracking failed ({e}). Proceeding.")
-
-        print("✅ Synthesis complete.")
-
-        # Add Synthesizer to visualization
-        synthesizer_agent = {
-            "id": "synthesizer",
-            "role": "Orchestrator", # Or Writer/System
-            "instruction": "Synthesize final report from results",
-            "output": output[:200] + "...", # Truncate for graph view
-            "tools": [],
-            "depth": state.get("depth", 0),
-            "status": "completed",
-            "execution_time_seconds": 0.0
-        }
-
-        # Connect all result producers to synthesizer
-        synthesizer_edges = [
-            {"source": node_id, "target": "synthesizer", "depth": state.get("depth", 0)}
-            for node_id in results.keys()
+    # --- AGENTGUARD GOVERNANCE: Identity Propagation ---
+    from utils.governance_utils import governance_context
+    with governance_context(agent_id="synthesizer", run_id=task_id or "default-run"):
+        messages = [
+            SystemMessage(content=synthesis_prompt),
+            HumanMessage(content=f"[RUN_ID: {task_id or 'unknown'}][AGENT: synthesizer]\n{user_input}")
         ]
 
-        return {
-            "synthesis": output,
-            "usage_stats": cost_callback.to_usage_stats(),
-            "all_agents": [synthesizer_agent],
-            "all_edges": synthesizer_edges
-        }
-    except Exception as e:
-        from utils.governance_utils import is_governance_block
-        if is_governance_block(e):
-            raise e
-        print(f"❌ Error in synthesizer_node: {e}")
-        return {"synthesis": f"Error generating synthesis: {str(e)}", "usage_stats": {}}
+        try:
+            response = await llm.ainvoke(messages, config=llm_config)
+
+            # Check for missing deliverables in the output (Fuzzy keyword check)
+            output = response.content
+            missing = []
+            for d in deliverables:
+                # Extract keywords (words > 3 chars)
+                keywords = [word.lower() for word in d.split() if len(word) > 3]
+                # If at least 50% of keywords are missing, consider it missing
+                if keywords:
+                    found_count = sum(1 for k in keywords if k in output.lower())
+                    if found_count / len(keywords) < 0.5:
+                        missing.append(d)
+                elif d.lower() not in output.lower():
+                    # Fallback for very short deliverable strings
+                    missing.append(d)
+
+            if missing:
+                print(f"⚠️ Synthesis may be missing deliverables: {missing}")
+                output += f"\n\n---\n### ⚠️ Note: The following deliverables may need additional work:\n" + "\n".join(f"- {m}" for m in missing)
+
+            # Record costs to global tracker
+            tracker = CostTracker.get_instance()
+            for record in cost_callback.records:
+                tracker._add_record(record)
+            print(f"💰 [synthesizer] Cost: ${cost_callback.get_total_cost():.6f}")
+
+            # --- AGENTGUARD GOVERNANCE: Circuit Breaker ---
+            try:
+                print(f"⚡ [AgentGuard] Recording consumption for task {task_id}...")
+                await track_consumption(
+                    run_id=task_id or "default-run",
+                    cost=cost_callback.get_total_cost(),
+                    steps=1,
+                    depth=state.get("depth", 0)
+                )
+            except Exception as e:
+                print(f"⚠️ AgentGuard consumption tracking failed ({e}). Proceeding.")
+
+            print("✅ Synthesis complete.")
+
+            # Add Synthesizer to visualization
+            synthesizer_agent = {
+                "id": "synthesizer",
+                "role": "Orchestrator", # Or Writer/System
+                "instruction": "Synthesize final report from results",
+                "output": output[:200] + "...", # Truncate for graph view
+                "tools": [],
+                "depth": state.get("depth", 0),
+                "status": "completed",
+                "execution_time_seconds": 0.0
+            }
+
+            # Connect all result producers to synthesizer
+            synthesizer_edges = [
+                {"source": node_id, "target": "synthesizer", "depth": state.get("depth", 0)}
+                for node_id in results.keys()
+            ]
+
+            return {
+                "synthesis": output,
+                "usage_stats": cost_callback.to_usage_stats(),
+                "all_agents": [synthesizer_agent],
+                "all_edges": synthesizer_edges
+            }
+        except Exception as e:
+            from utils.governance_utils import is_governance_block
+            if is_governance_block(e):
+                raise e
+            print(f"❌ Error in synthesizer_node: {e}")
+            return {"synthesis": f"Error generating synthesis: {str(e)}", "usage_stats": {}}

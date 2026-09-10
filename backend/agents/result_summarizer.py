@@ -129,48 +129,54 @@ async def summarize_result(
     Returns:
         Tuple of (compressed_result, usage_stats)
     """
-    try:
-        prompt = RESULT_SUMMARY_PROMPT.format(task=task, results=result)
-        messages = [
-            SystemMessage(content=prompt),
-            HumanMessage(content="Compress the execution results.")
-        ]
-        
-        # Cost tracking
-        cost_callback = CostTrackingCallback(
-            task_id=root_task_id,
-            node_name=f"result_summarizer_d{depth}"
-        )
-        llm_config: RunnableConfig = {"callbacks": [cost_callback]}
-        
-        structured_llm = llm_mini.with_structured_output(CompressedResult)
-        compressed = await safe_ainvoke(structured_llm, messages, config=llm_config)
-        
-        # Record costs
-        tracker = CostTracker.get_instance()
-        for record in cost_callback.records:
-            tracker._add_record(record)
-        
-        # Format as factory-style output
-        formatted = f"""Intent: {compressed.intent}
+    # --- AGENTGUARD GOVERNANCE: Identity Propagation ---
+    from utils.governance_utils import governance_context
+    with governance_context(agent_id="result_summarizer", run_id=root_task_id or "default-run"):
+        try:
+            prompt = RESULT_SUMMARY_PROMPT.format(task=task, results=result)
+            messages = [
+                SystemMessage(content=prompt),
+                HumanMessage(content=f"[RUN_ID: {root_task_id or 'unknown'}][AGENT: result_summarizer]\nCompress the execution results.")
+            ]
+            
+            # Cost tracking
+            cost_callback = CostTrackingCallback(
+                task_id=root_task_id,
+                node_name=f"result_summarizer_d{depth}"
+            )
+            llm_config: RunnableConfig = {"callbacks": [cost_callback]}
+            
+            structured_llm = llm_mini.with_structured_output(CompressedResult)
+            compressed = await safe_ainvoke(structured_llm, messages, config=llm_config)
+            
+            # Record costs
+            tracker = CostTracker.get_instance()
+            for record in cost_callback.records:
+                tracker._add_record(record)
+            
+            # Format as factory-style output
+            formatted = f"""Intent: {compressed.intent}
 Changes: {compressed.changes}
 Constraints: {compressed.constraints}
 Next Steps: {compressed.next_steps}"""
-        
-        original_tokens = estimate_token_count(result)
-        compressed_tokens = estimate_token_count(formatted)
-        reduction_pct = ((original_tokens - compressed_tokens) / original_tokens * 100) if original_tokens > 0 else 0
-        
-        print(f"   📉 [ResultSummarizer] Compressed {original_tokens} → {compressed_tokens} tokens ({reduction_pct:.1f}% reduction)")
-        
-        return formatted, cost_callback.to_usage_stats()
-        
-    except Exception as e:
-        print(f"   ⚠️ [ResultSummarizer] Compression failed: {e}, returning truncated original")
-        # Fallback: Simple truncation
-        max_chars = SUMMARY_THRESHOLD_TOKENS * 4
-        truncated = result[:max_chars] + f"\n\n[...truncated {len(result) - max_chars} chars]" if len(result) > max_chars else result
-        return truncated, {}
+            
+            original_tokens = estimate_token_count(result)
+            compressed_tokens = estimate_token_count(formatted)
+            reduction_pct = ((original_tokens - compressed_tokens) / original_tokens * 100) if original_tokens > 0 else 0
+            
+            print(f"   📉 [ResultSummarizer] Compressed {original_tokens} → {compressed_tokens} tokens ({reduction_pct:.1f}% reduction)")
+            
+            return formatted, cost_callback.to_usage_stats()
+            
+        except Exception as e:
+            from utils.governance_utils import is_governance_block
+            if is_governance_block(e):
+                raise e
+            print(f"   ⚠️ [ResultSummarizer] Compression failed: {e}, returning truncated original")
+            # Fallback: Simple truncation
+            max_chars = SUMMARY_THRESHOLD_TOKENS * 4
+            truncated = result[:max_chars] + f"\n\n[...truncated {len(result) - max_chars} chars]" if len(result) > max_chars else result
+            return truncated, {}
 
 
 def should_compress_result(result: str, depth: int) -> bool:

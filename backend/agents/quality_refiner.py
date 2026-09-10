@@ -45,28 +45,31 @@ async def quality_refiner_node(instruction: str, output: str, previous_reasoning
 
 <task>Generate the improved response based on the diagnosis.</task>"""
 
-    messages = [
-        SystemMessage(content=correction_prompt),
-        HumanMessage(content="Analyze the failed attempt and generate the improved response as instructed.")
-    ]
-    try:
-        # Cost tracking setup - prefer root_task_id for consistent attribution
-        task_id = root_task_id or (config.get("configurable", {}).get("thread_id") if config else None)
-        cost_callback = CostTrackingCallback(task_id=task_id, node_name="quality_refiner")
-        llm_config: RunnableConfig = {"callbacks": [cost_callback]}
-        
-        # Use the main LLM for correction to ensure high quality
-        response = await llm.ainvoke(messages, config=llm_config)
-        
-        # Record costs to global tracker
-        tracker = CostTracker.get_instance()
-        for record in cost_callback.records:
-            tracker._add_record(record)
+    # --- AGENTGUARD GOVERNANCE: Identity Propagation ---
+    from utils.governance_utils import governance_context
+    with governance_context(agent_id="quality_refiner", run_id=root_task_id or "default-run"):
+        messages = [
+            SystemMessage(content=correction_prompt),
+            HumanMessage(content=f"[RUN_ID: {root_task_id or 'unknown'}][AGENT: quality_refiner]\nAnalyze the failed attempt and generate the improved response as instructed.")
+        ]
+        try:
+            # Cost tracking setup - prefer root_task_id for consistent attribution
+            task_id = root_task_id or (config.get("configurable", {}).get("thread_id") if config else None)
+            cost_callback = CostTrackingCallback(task_id=task_id, node_name="quality_refiner")
+            llm_config: RunnableConfig = {"callbacks": [cost_callback]}
             
-        return {"output": response.content, "usage_stats": cost_callback.to_usage_stats()}
-    except Exception as e:
-        from utils.governance_utils import is_governance_block
-        if is_governance_block(e):
-            raise e
-        print(f"⚠️ Quality refinement failed: {e}")
-        return {"output": output, "usage_stats": {}} # Fallback to original
+            # Use the main LLM for correction to ensure high quality
+            response = await llm.ainvoke(messages, config=llm_config)
+            
+            # Record costs to global tracker
+            tracker = CostTracker.get_instance()
+            for record in cost_callback.records:
+                tracker._add_record(record)
+                
+            return {"output": response.content, "usage_stats": cost_callback.to_usage_stats()}
+        except Exception as e:
+            from utils.governance_utils import is_governance_block
+            if is_governance_block(e):
+                raise e
+            print(f"⚠️ Quality refinement failed: {e}")
+            return {"output": output, "usage_stats": {}} # Fallback to original
