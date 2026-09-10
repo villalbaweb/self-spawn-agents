@@ -68,9 +68,10 @@ def protected_tool(
             decision = await verify_with_governance(
                 agent_id=full_agent_id,
                 input_text=input_text,
-                context=context
+                context=context,
+                enforce=False  # the wrapper below honours the `enforce` setting
             )
-            
+
             if decision.get("outcome") == "BLOCK":
                 print(f"🚫 [AgentGuard] BLOCKED Tool Execution: {decision.get('reason')}")
                 return {"outcome": "BLOCK", "reason": decision.get("reason"), "run_id": run_id}
@@ -285,7 +286,8 @@ def langgraph_node_guard(
                 decision = await verify_with_governance(
                     agent_id=agent_id,
                     input_text=input_text,
-                    context=context
+                    context=context,
+                    enforce=False  # PAUSE handling and state recording happen below
                 )
 
             # Handle PAUSE Outcomes (Synchronous Rescue)
